@@ -25,10 +25,17 @@ export const fetchSupabaseTopics = async (): Promise<Topic[]> => {
   if (!data) return [];
 
   return data.map((row: any) => {
+      // Safety Check: Handle double-nested data (e.g., row.data.data)
+      // This happens if the save payload was { data: { ...topic } } instead of just { ...topic }
+      if (row.data && row.data.data && typeof row.data.data === 'object') {
+          return { ...row.data.data, id: row.id };
+      }
+
       // Check if data column exists (JSONB pattern) as per setup instructions
       if (row.data) {
           return { ...row.data, id: row.id };
       }
+      
       // Fallback: If user created columns flat (title, keyword, etc)
       return {
           id: row.id,

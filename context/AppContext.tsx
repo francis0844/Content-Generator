@@ -68,6 +68,14 @@ const safeParse = (value: any) => {
     return value;
 };
 
+// Helper to clean strings (remove quotes)
+const cleanString = (val: any): string => {
+    if (typeof val === 'string') {
+        return val.replace(/^["']|["']$/g, '').trim();
+    }
+    return '';
+};
+
 // Normalize function to ensure data structure consistency from various sources
 const normalizeTopic = (t: any): Topic => {
   const id = t.id ? String(t.id) : generateId();
@@ -75,58 +83,106 @@ const normalizeTopic = (t: any): Topic => {
   // 1. Scavenge Generated Content
   let generatedContent: GeneratedContentData | undefined = t.generatedContent || t.content;
   
-  if (!generatedContent && (t.content_html || t.html_content || t.htmlContent || t.featured_image || t.image)) {
-      generatedContent = {
-          title: t.title || 'Untitled',
-          h1: t.h1 || t.title || '',
-          slug: t.slug || '',
-          sections: [],
-          faq: [],
-          focus_keyword: t.focus_keyword || t.keyword || '',
-          related_keywords: [],
-          seo_title: t.seo_title || '',
-          meta_description: t.meta_description || '',
-          content_html: t.content_html || t.html_content || t.htmlContent || '',
-          featured_image: t.featured_image || t.image || t.imageUrl
-      };
+  // If generatedContent is missing, check if we have enough root-level data to build it
+  if (!generatedContent) {
+      const hasContent = t.content_html || t.html_content || t.htmlContent || t.body || 
+                         t.featured_image || t.image || t.imageUrl || t.img || 
+                         t.seo_title || t.seoTitle;
+      
+      if (hasContent) {
+          generatedContent = {
+              title: t.title || 'Untitled',
+              h1: t.h1 || t.title || '',
+              slug: t.slug || '',
+              sections: [],
+              faq: [],
+              focus_keyword: t.focus_keyword || t.keyword || '',
+              related_keywords: [],
+              seo_title: t.seo_title || '',
+              meta_description: t.meta_description || '',
+              content_html: t.content_html || t.html_content || t.htmlContent || '',
+              featured_image: ''
+          };
+      }
   }
   
+  // If we have a generated content object (either existing or newly created), populate it aggressively
   if (generatedContent) {
-      if (!generatedContent.sections && t.sections) generatedContent.sections = safeParse(t.sections);
-      if (!generatedContent.faq && t.faq) generatedContent.faq = safeParse(t.faq);
-      if (!generatedContent.related_keywords && t.related_keywords) generatedContent.related_keywords = safeParse(t.related_keywords);
-      
-      if (!generatedContent.seo_title && t.seo_title) generatedContent.seo_title = t.seo_title;
-      if (!generatedContent.meta_description && t.meta_description) generatedContent.meta_description = t.meta_description;
-      if (!generatedContent.slug && t.slug) generatedContent.slug = t.slug;
-      if (!generatedContent.focus_keyword && (t.focus_keyword || t.keyword)) generatedContent.focus_keyword = t.focus_keyword || t.keyword;
+      // Helper to populate a field if missing in generatedContent but present in root `t`
+      const populateField = (targetKey: keyof GeneratedContentData, sourceKeys: string[], isArray = false) => {
+          // If already populated, skip
+          if ((generatedContent as any)[targetKey]) {
+              const val = (generatedContent as any)[targetKey];
+              if (isArray && Array.isArray(val) && val.length > 0) return;
+              if (!isArray && val) return;
+          }
 
-      if (t.content_html && !generatedContent.content_html) generatedContent.content_html = t.content_html;
-      if (t.html_content && !generatedContent.content_html) generatedContent.content_html = t.html_content;
-      if (t.htmlContent && !generatedContent.content_html) generatedContent.content_html = t.htmlContent;
-      
-      if (t.image && !generatedContent.featured_image) generatedContent.featured_image = t.image;
-      if (t.featured_image && !generatedContent.featured_image) generatedContent.featured_image = t.featured_image;
+          // Look in source keys
+          for (const key of sourceKeys) {
+              if (t[key]) {
+                  const val = t[key];
+                  if (isArray) {
+                      (generatedContent as any)[targetKey] = safeParse(val);
+                  } else {
+                      (generatedContent as any)[targetKey] = val;
+                  }
+                  break; 
+              }
+          }
+      };
 
+      // Mappings for robust data scavenging
+      populateField('seo_title', ['seo_title', 'seoTitle', 'meta_title']);
+      populateField('meta_description', ['meta_description', 'metaDescription', 'description', 'meta_desc']);
+      populateField('focus_keyword', ['focus_keyword', 'focusKeyword', 'keyword']);
+      populateField('slug', ['slug', 'url_slug', 'urlSlug']);
+      populateField('h1', ['h1', 'headline', 'title']);
+      populateField('content_html', ['content_html', 'html_content', 'htmlContent', 'body', 'content', 'article_html']);
+      
+      populateField('sections', ['sections', 'outline', 'structure'], true);
+      populateField('faq', ['faq', 'faqs', 'qna', 'questions'], true);
+      populateField('related_keywords', ['related_keywords', 'relatedKeywords', 'keywords', 'tags'], true);
+
+      // --- Aggressive Image Scavenging ---
+      // Check all possible locations for the image URL
+      const imgSources = [
+          t.featured_image, t.featuredImage, t.image, t.imageUrl, t.img, t.src, t.picture,
+          generatedContent.featured_image, (generatedContent as any).image, (generatedContent as any).imageUrl, (generatedContent as any).img
+      ];
+      
+      const foundImg = imgSources.find(i => i && typeof i === 'string' && i.length > 5 && (i.startsWith('http') || i.startsWith('data:image')));
+      if (foundImg) {
+          generatedContent.featured_image = cleanString(foundImg);
+      }
+      
+      // Ensure arrays are actually arrays (parse stringified JSON if needed)
       if (typeof generatedContent.sections === 'string') generatedContent.sections = safeParse(generatedContent.sections);
       if (typeof generatedContent.faq === 'string') generatedContent.faq = safeParse(generatedContent.faq);
       if (typeof generatedContent.related_keywords === 'string') generatedContent.related_keywords = safeParse(generatedContent.related_keywords);
+      
+      // Safety: Ensure fields are at least empty strings if still undefined
+      if (!generatedContent.seo_title) generatedContent.seo_title = '';
+      if (!generatedContent.meta_description) generatedContent.meta_description = '';
   }
 
   // 2. Scavenge Validator Data
   let validatorData: ValidatorData | undefined = t.validatorData;
   
   if (!validatorData) {
+      // Check for validator response at root or nested
       const vResponse = t.validator_response || t.validatorResponse;
       
       if (vResponse) {
           const parsedResponse = safeParse(vResponse);
+          // Sometimes the response is directly the result, sometimes it wraps it
           const resultObj = parsedResponse.result || parsedResponse;
+          
           validatorData = {
               validated_at: t.validated_at || new Date().toISOString(),
               result: safeParse(resultObj)
           };
       } else if (t.scores || t.summary || t.reasons) {
+          // Reconstruct from flat fields
           validatorData = {
               validated_at: t.validated_at || new Date().toISOString(),
               result: {
@@ -140,6 +196,7 @@ const normalizeTopic = (t: any): Topic => {
       }
   }
 
+  // Normalize validator result internal structures
   if (validatorData && validatorData.result) {
       if (typeof validatorData.result.scores === 'string') validatorData.result.scores = safeParse(validatorData.result.scores);
       if (typeof validatorData.result.reasons === 'string') validatorData.result.reasons = safeParse(validatorData.result.reasons);
@@ -148,6 +205,7 @@ const normalizeTopic = (t: any): Topic => {
 
   // 3. Auto-Detect Status
   let status = t.status || TopicStatus.PENDING;
+  // If we have substantial HTML content, assume it's generated, unless explicitly marked otherwise
   if (
       generatedContent?.content_html && 
       generatedContent.content_html.length > 50 && 
@@ -273,41 +331,61 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     let topicToSave: Topic | undefined;
 
     setTopics((prev) => {
-      return prev.map((t) => {
-          if (t.id !== id) return t;
+      // Find the topic to be updated based on ID
+      const existingTopic = prev.find(t => t.id === id);
+      if (!existingTopic) return prev;
 
-          let generatedContent: GeneratedContentData | undefined = data.content;
-          let validatorData: ValidatorData | undefined = data.validator_response;
+      let generatedContent: GeneratedContentData | undefined = data.content;
+      let validatorData: ValidatorData | undefined = data.validator_response;
 
-          // Backfill if structure is flat
-          if (!generatedContent && (data.content_html || data.html_content || data.h1 || data.featured_image || data.image)) {
-              generatedContent = { ...data };
-              if (data.image && !generatedContent!.featured_image) {
-                 generatedContent!.featured_image = data.image;
+      // Backfill if structure is flat (common from AI webhooks)
+      if (!generatedContent && (data.content_html || data.html_content || data.h1 || data.featured_image || data.image)) {
+          generatedContent = { ...data };
+      }
+      
+      // Ensure image is captured if present at root data or legacy fields
+      if (generatedContent) {
+          const rawImage = data.image || data.imageUrl || data.featured_image || data.img;
+          if (rawImage && !generatedContent.featured_image) {
+              generatedContent.featured_image = cleanString(rawImage);
+          }
+      }
+
+      if (!validatorData && data.validated_at && data.result) {
+          validatorData = {
+              validated_at: data.validated_at,
+              result: data.result
+          };
+      } else if (!validatorData && (data.scores || data.summary)) {
+          // Reconstruct validator if data came flat
+          validatorData = {
+              validated_at: new Date().toISOString(),
+              result: {
+                  scores: data.scores,
+                  summary: data.summary,
+                  reasons: data.reasons,
+                  recommendations: data.recommendations,
+                  status: 'completed'
               }
-          }
+          };
+      }
 
-          if (!validatorData && data.validated_at && data.result) {
-              validatorData = {
-                  validated_at: data.validated_at,
-                  result: data.result
-              };
-          }
-
-          const updatedTopic = normalizeTopic({ 
-              ...t, 
-              status: TopicStatus.CONTENT_GENERATED,
-              generatedContent: generatedContent,
-              validatorData: validatorData,
-              htmlContent: t.htmlContent || generatedContent?.content_html
-          });
-          
-          topicToSave = updatedTopic;
-          return updatedTopic;
+      // Create the updated topic object using normalization to ensure structure is correct
+      const updatedTopic = normalizeTopic({ 
+          ...existingTopic, 
+          status: TopicStatus.CONTENT_GENERATED,
+          generatedContent: generatedContent,
+          validatorData: validatorData,
+          htmlContent: existingTopic.htmlContent || generatedContent?.content_html
       });
+      
+      topicToSave = updatedTopic;
+      
+      // Update state
+      return prev.map(t => t.id === id ? updatedTopic : t);
     });
 
-    // Save to cloud outside the state setter to ensure we have the fully updated object
+    // Save to cloud outside the state setter to ensure we have the fully updated object and avoid batching issues
     if (topicToSave) {
         console.log("Saving generated content to cloud...", topicToSave);
         saveTopicToCloud(topicToSave);

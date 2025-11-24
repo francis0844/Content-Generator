@@ -272,7 +272,10 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
         }
 
         // 3. Normalize 'image'
-        if (result.image && !result.content.featured_image) {
+        // Explicitly put image at root so AppContext can find it easily
+        if (!result.image && result.content.featured_image) {
+            result.image = result.content.featured_image;
+        } else if (result.image && !result.content.featured_image) {
              result.content.featured_image = result.image;
         }
 
