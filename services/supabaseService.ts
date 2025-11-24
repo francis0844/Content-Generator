@@ -1,41 +1,22 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import { Topic } from '../types';
 
-let supabaseInstance: SupabaseClient | null = null;
-let currentUrl: string | null = null;
-let currentKey: string | null = null;
+// Hardcoded Credentials for Anchor Computer Software Database
+const SUPABASE_URL = 'https://jgdjlrmmcfizsdowitgf.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnZGpscm1tY2ZpenNkb3dpdGdmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5ODk5ODAsImV4cCI6MjA3OTU2NTk4MH0.hGosTqlhLSFmDzHR3XiSZxUJnHuNN7BxMP8mfDfBBZ0';
 
-const initSupabase = (url: string, key: string) => {
-  if (!url || !key) return null;
-  
-  // Re-initialize if credentials change
-  if (!supabaseInstance || currentUrl !== url || currentKey !== key) {
-    try {
-        supabaseInstance = createClient(url, key);
-        currentUrl = url;
-        currentKey = key;
-    } catch (e) {
-        console.error("Failed to initialize Supabase client:", e);
-        return null;
-    }
-  }
-  return supabaseInstance;
-};
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-export const fetchSupabaseTopics = async (url: string, key: string): Promise<Topic[]> => {
-  const sb = initSupabase(url, key);
-  if (!sb) throw new Error("Invalid Supabase Credentials");
-
-  const { data, error } = await sb
+export const fetchSupabaseTopics = async (): Promise<Topic[]> => {
+  const { data, error } = await supabase
     .from('topics')
     .select('*');
 
   if (error) {
     console.error('Supabase Fetch Error Details:', JSON.stringify(error, null, 2));
     
-    // Check for RLS policy error
     if (error.code === '42501') {
-        throw new Error(`Permission Denied (RLS Violation). Please go to Settings > Cloud Database and run the SQL Setup script.`);
+        throw new Error(`Permission Denied (RLS Violation). Please go to Settings and check the SQL Setup script.`);
     }
 
     throw new Error(`Supabase Error: ${error.message || JSON.stringify(error)}`);
@@ -56,10 +37,7 @@ export const fetchSupabaseTopics = async (url: string, key: string): Promise<Top
   });
 };
 
-export const saveSupabaseTopic = async (url: string, key: string, topic: Topic) => {
-  const sb = initSupabase(url, key);
-  if (!sb) return;
-
+export const saveSupabaseTopic = async (topic: Topic) => {
   // Payload strictly follows the schema: id (text), data (jsonb)
   const payload = { 
       id: topic.id, 
@@ -67,25 +45,24 @@ export const saveSupabaseTopic = async (url: string, key: string, topic: Topic) 
       updated_at: new Date().toISOString() 
   };
 
-  const { error } = await sb
+  // Debug log to ensure content is present before save
+  if (topic.status === 'CONTENT_GENERATED' && topic.generatedContent) {
+      console.log(`Saving Topic ${topic.id} to Supabase with Content (Length: ${topic.generatedContent.content_html?.length || 0})`);
+  }
+
+  const { error } = await supabase
     .from('topics')
     .upsert(payload, { onConflict: 'id' });
 
   if (error) {
       console.error('Supabase Save Error Details:', JSON.stringify(error, null, 2));
-      
-      if (error.code === '42501') {
-          console.warn("Supabase RLS Error: New row violates row-level security policy. Please run the SQL Setup script in Settings.");
-      }
-      // We log but don't throw to prevent blocking the UI flow for non-critical saves
+  } else {
+      console.log(`Successfully saved topic ${topic.id} to Supabase`);
   }
 };
 
-export const deleteSupabaseTopic = async (url: string, key: string, id: string) => {
-    const sb = initSupabase(url, key);
-    if (!sb) return;
-
-    const { error } = await sb
+export const deleteSupabaseTopic = async (id: string) => {
+    const { error } = await supabase
         .from('topics')
         .delete()
         .eq('id', id);
@@ -93,4 +70,37 @@ export const deleteSupabaseTopic = async (url: string, key: string, id: string) 
     if (error) {
         console.error('Supabase Delete Error Details:', JSON.stringify(error, null, 2));
     }
+}
+
+// --- Application Config (Angles) ---
+
+export const fetchAppConfig = async (): Promise<{ preferredAngles: string[], unpreferredAngles: string[] } | null> => {
+    const { data, error } = await supabase
+        .from('app_config')
+        .select('key, value');
+
+    if (error) {
+        // Silent fail if table doesn't exist yet, just return null so app uses defaults
+        return null; 
+    }
+
+    const config: any = {};
+    if (data) {
+        data.forEach((row: any) => {
+            config[row.key] = row.value;
+        });
+    }
+
+    return {
+        preferredAngles: config.preferred_angles || [],
+        unpreferredAngles: config.unpreferred_angles || []
+    };
+}
+
+export const saveAppConfig = async (key: 'preferred_angles' | 'unpreferred_angles', value: string[]) => {
+    const { error } = await supabase
+        .from('app_config')
+        .upsert({ key, value }, { onConflict: 'key' });
+    
+    if (error) console.error(`Config Save Error (${key}):`, error);
 }

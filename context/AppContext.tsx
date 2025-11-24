@@ -1,9 +1,7 @@
-
 import React, { createContext, useContext, useState, useEffect, ReactNode, PropsWithChildren } from 'react';
 import { Topic, TopicStatus, GeneratedContentData, ValidatorData, ProductDef } from '../types';
 import { fetchExternalData } from '../services/makeService';
-import { loadFromVercel, saveToVercel } from '../services/vercelService';
-import { fetchSupabaseTopics, saveSupabaseTopic, deleteSupabaseTopic } from '../services/supabaseService';
+import { fetchSupabaseTopics, saveSupabaseTopic, deleteSupabaseTopic, fetchAppConfig, saveAppConfig } from '../services/supabaseService';
 
 // Defined Products List
 export const PRODUCTS: ProductDef[] = [
@@ -35,14 +33,6 @@ interface AppContextType {
   setArticleReviewWebhookUrl: (url: string) => void;
   draftingWebhookUrl: string;
   setDraftingWebhookUrl: (url: string) => void;
-  vercelKvUrl: string;
-  setVercelKvUrl: (url: string) => void;
-  vercelKvToken: string;
-  setVercelKvToken: (token: string) => void;
-  supabaseUrl: string;
-  setSupabaseUrl: (url: string) => void;
-  supabaseKey: string;
-  setSupabaseKey: (key: string) => void;
   addAngle: (type: 'preferred' | 'unpreferred', angle: string) => void;
   removeAngle: (type: 'preferred' | 'unpreferred', angle: string) => void;
   generateId: () => string;
@@ -193,29 +183,9 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     return (localStorage.getItem('topicGen_theme') as Theme) || 'light';
   });
 
-  const [topics, setTopics] = useState<Topic[]>(() => {
-    const saved = localStorage.getItem('topicGen_topics');
-    let parsedTopics = saved ? JSON.parse(saved) : [];
-    return parsedTopics.map(normalizeTopic);
-  });
-
-  const [preferredAngles, setPreferredAngles] = useState<string[]>(() => {
-    const saved = localStorage.getItem('topicGen_preferred');
-    return saved ? JSON.parse(saved) : [
-      'Enterprise scalability', 
-      'Data security and compliance', 
-      'Cost reduction strategies'
-    ];
-  });
-
-  const [unpreferredAngles, setUnpreferredAngles] = useState<string[]>(() => {
-    const saved = localStorage.getItem('topicGen_unpreferred');
-    return saved ? JSON.parse(saved) : [
-      'Cheap/Free alternatives', 
-      'Beginner tutorials', 
-      'Opinion pieces'
-    ];
-  });
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [preferredAngles, setPreferredAngles] = useState<string[]>([]);
+  const [unpreferredAngles, setUnpreferredAngles] = useState<string[]>([]);
 
   // Webhooks
   const [webhookUrl, setWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_webhook') || 'https://hook.us2.make.com/p0fwplqxbb8dazf65l1mqoa0for1aoxj');
@@ -225,16 +195,33 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   const [articleReviewWebhookUrl, setArticleReviewWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_article_review_webhook') || 'https://hook.us2.make.com/l4seaxq3m0pppc2fdu6zzfppj5guc6re');
   const [draftingWebhookUrl, setDraftingWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_drafting_webhook') || 'https://hook.us2.make.com/hpg4g5b1tv6oq7teawrbwm923qm5bgin');
 
-  // Vercel KV Credentials
-  const [vercelKvUrl, setVercelKvUrl] = useState<string>(() => localStorage.getItem('topicGen_vercel_kv_url') || '');
-  const [vercelKvToken, setVercelKvToken] = useState<string>(() => localStorage.getItem('topicGen_vercel_kv_token') || '');
-
-  // Supabase Credentials
-  const [supabaseUrl, setSupabaseUrl] = useState<string>(() => localStorage.getItem('topicGen_supabase_url') || '');
-  const [supabaseKey, setSupabaseKey] = useState<string>(() => localStorage.getItem('topicGen_supabase_key') || '');
-
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [contentGeneratingIds, setContentGeneratingIds] = useState<string[]>([]);
+
+  // Initialize Data from Database
+  useEffect(() => {
+    const initData = async () => {
+      await syncTopics();
+      const config = await fetchAppConfig();
+      if (config) {
+        if (config.preferredAngles.length > 0) setPreferredAngles(config.preferredAngles);
+        if (config.unpreferredAngles.length > 0) setUnpreferredAngles(config.unpreferredAngles);
+      } else {
+        // Defaults if DB is empty
+        setPreferredAngles([
+            'Enterprise scalability', 
+            'Data security and compliance', 
+            'Cost reduction strategies'
+        ]);
+        setUnpreferredAngles([
+            'Cheap/Free alternatives', 
+            'Beginner tutorials', 
+            'Opinion pieces'
+        ]);
+      }
+    };
+    initData();
+  }, []);
 
   // Effect to Persist State
   useEffect(() => {
@@ -246,10 +233,6 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     localStorage.setItem('topicGen_theme', theme);
   }, [theme]);
 
-  useEffect(() => { localStorage.setItem('topicGen_topics', JSON.stringify(topics)); }, [topics]);
-  useEffect(() => { localStorage.setItem('topicGen_preferred', JSON.stringify(preferredAngles)); }, [preferredAngles]);
-  useEffect(() => { localStorage.setItem('topicGen_unpreferred', JSON.stringify(unpreferredAngles)); }, [unpreferredAngles]);
-  
   // Persist Settings
   useEffect(() => { localStorage.setItem('topicGen_webhook', webhookUrl); }, [webhookUrl]);
   useEffect(() => { localStorage.setItem('topicGen_content_webhook', contentWebhookUrl); }, [contentWebhookUrl]);
@@ -257,34 +240,15 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   useEffect(() => { localStorage.setItem('topicGen_sync_webhook', syncWebhookUrl); }, [syncWebhookUrl]);
   useEffect(() => { localStorage.setItem('topicGen_article_review_webhook', articleReviewWebhookUrl); }, [articleReviewWebhookUrl]);
   useEffect(() => { localStorage.setItem('topicGen_drafting_webhook', draftingWebhookUrl); }, [draftingWebhookUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_vercel_kv_url', vercelKvUrl); }, [vercelKvUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_vercel_kv_token', vercelKvToken); }, [vercelKvToken]);
-  useEffect(() => { localStorage.setItem('topicGen_supabase_url', supabaseUrl); }, [supabaseUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_supabase_key', supabaseKey); }, [supabaseKey]);
 
-  // Helper to save specific topic to cloud (Supabase priority)
+  // Helper to save specific topic to cloud (Supabase)
   const saveTopicToCloud = async (topic: Topic) => {
-    if (supabaseUrl && supabaseKey) {
-        try {
-            await saveSupabaseTopic(supabaseUrl, supabaseKey, topic);
-        } catch (e: any) {
-            console.error("Supabase Save failed:", e.message || JSON.stringify(e));
-        }
-    } else if (vercelKvUrl && vercelKvToken) {
-        // Vercel KV is usually bulk save, but we can't easily update single item in simple list
-        // So we trigger the bulk save effect
+    try {
+        await saveSupabaseTopic(topic);
+    } catch (e: any) {
+        console.error("Supabase Save failed:", e.message || JSON.stringify(e));
     }
   };
-
-  // Auto-Save to Vercel KV (Bulk) when topics change - ONLY if Supabase is NOT active
-  useEffect(() => {
-    if (vercelKvUrl && vercelKvToken && !supabaseUrl && topics.length > 0) {
-      const timeoutId = setTimeout(() => {
-        saveToVercel(vercelKvUrl, vercelKvToken, topics).catch(e => console.error("Vercel Auto-save failed", e));
-      }, 2000);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [topics, vercelKvUrl, vercelKvToken, supabaseUrl]);
 
   const addTopics = (newTopics: Topic[]) => {
     setTopics((prev) => [...newTopics, ...prev]);
@@ -306,13 +270,16 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   };
 
   const saveGeneratedContent = (id: string, data: any) => {
-    setTopics((prev) =>
-      prev.map((t) => {
+    let topicToSave: Topic | undefined;
+
+    setTopics((prev) => {
+      return prev.map((t) => {
           if (t.id !== id) return t;
 
           let generatedContent: GeneratedContentData | undefined = data.content;
           let validatorData: ValidatorData | undefined = data.validator_response;
 
+          // Backfill if structure is flat
           if (!generatedContent && (data.content_html || data.html_content || data.h1 || data.featured_image || data.image)) {
               generatedContent = { ...data };
               if (data.image && !generatedContent!.featured_image) {
@@ -335,32 +302,48 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
               htmlContent: t.htmlContent || generatedContent?.content_html
           });
           
-          saveTopicToCloud(updatedTopic);
+          topicToSave = updatedTopic;
           return updatedTopic;
-      })
-    );
+      });
+    });
+
+    // Save to cloud outside the state setter to ensure we have the fully updated object
+    if (topicToSave) {
+        console.log("Saving generated content to cloud...", topicToSave);
+        saveTopicToCloud(topicToSave);
+    }
   };
 
   const deleteTopic = (id: string) => {
-    if (supabaseUrl && supabaseKey) {
-        deleteSupabaseTopic(supabaseUrl, supabaseKey, id).catch(e => console.error("Cloud delete failed", e));
-    }
+    deleteSupabaseTopic(id).catch(e => console.error("Cloud delete failed", e));
     setTopics((prev) => prev.filter((t) => String(t.id) !== String(id)));
   };
 
   const addAngle = (type: 'preferred' | 'unpreferred', angle: string) => {
     if (type === 'preferred') {
-      if (!preferredAngles.includes(angle)) setPreferredAngles([...preferredAngles, angle]);
+      if (!preferredAngles.includes(angle)) {
+        const newAngles = [...preferredAngles, angle];
+        setPreferredAngles(newAngles);
+        saveAppConfig('preferred_angles', newAngles);
+      }
     } else {
-      if (!unpreferredAngles.includes(angle)) setUnpreferredAngles([...unpreferredAngles, angle]);
+      if (!unpreferredAngles.includes(angle)) {
+        const newAngles = [...unpreferredAngles, angle];
+        setUnpreferredAngles(newAngles);
+        saveAppConfig('unpreferred_angles', newAngles);
+      }
     }
   };
 
   const removeAngle = (type: 'preferred' | 'unpreferred', angle: string) => {
     if (type === 'preferred') {
-      setPreferredAngles(preferredAngles.filter((a) => a !== angle));
+      const newAngles = preferredAngles.filter((a) => a !== angle);
+      setPreferredAngles(newAngles);
+      saveAppConfig('preferred_angles', newAngles);
     } else {
-      setUnpreferredAngles(unpreferredAngles.filter((a) => a !== angle));
+      const newAngles = unpreferredAngles.filter((a) => a !== angle);
+      setUnpreferredAngles(newAngles);
+      saveAppConfig('unpreferred_angles', newAngles);
     }
   };
 
@@ -376,28 +359,15 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     let externalTopics: Topic[] = [];
 
     // Prioritize Supabase
-    if (supabaseUrl && supabaseKey) {
-        console.log("Syncing from Supabase...");
-        try {
-            externalTopics = await fetchSupabaseTopics(supabaseUrl, supabaseKey);
-        } catch (e: any) {
-            // Rethrow so the UI can show the error alert
-            throw new Error(`Supabase Sync Failed: ${e.message}`);
+    try {
+        externalTopics = await fetchSupabaseTopics();
+    } catch (e: any) {
+        console.error("Supabase Sync Failed:", e);
+        // Fallback to Webhook if Supabase fails (optional legacy support)
+        if (syncWebhookUrl) {
+           console.log("Supabase failed, attempting Webhook fallback...");
+           try { externalTopics = await fetchExternalData(syncWebhookUrl); } catch(err) {}
         }
-    }
-    // Then Vercel KV
-    else if (vercelKvUrl && vercelKvToken) {
-        console.log("Syncing from Vercel KV...");
-        const cloudData = await loadFromVercel(vercelKvUrl, vercelKvToken);
-        if (cloudData) externalTopics = cloudData;
-    } 
-    // Fallback to Webhook
-    else if (syncWebhookUrl) {
-        console.log("Syncing from Webhook...");
-        externalTopics = await fetchExternalData(syncWebhookUrl);
-    } 
-    else {
-        throw new Error("No Sync method configured. Please add Supabase credentials, Vercel KV, or a Sync Webhook URL.");
     }
     
     setTopics(currentTopics => {
@@ -476,14 +446,6 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
         setArticleReviewWebhookUrl,
         draftingWebhookUrl,
         setDraftingWebhookUrl,
-        vercelKvUrl,
-        setVercelKvUrl,
-        vercelKvToken,
-        setVercelKvToken,
-        supabaseUrl,
-        setSupabaseUrl,
-        supabaseKey,
-        setSupabaseKey,
         addAngle,
         removeAngle,
         generateId,

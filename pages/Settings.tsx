@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Save, Database, Webhook, FileText, MessageSquare, Download, Upload, CheckSquare, Server, Share2, Send, Info, Layers, ArrowRight, Cloud } from 'lucide-react';
+import { Save, Database, Webhook, FileText, MessageSquare, Download, Upload, CheckSquare, Server, Share2, Send, Info, Layers, ArrowRight, CheckCircle } from 'lucide-react';
 
 const Settings: React.FC = () => {
   const { 
@@ -10,15 +10,11 @@ const Settings: React.FC = () => {
       syncWebhookUrl, setSyncWebhookUrl,
       articleReviewWebhookUrl, setArticleReviewWebhookUrl,
       draftingWebhookUrl, setDraftingWebhookUrl,
-      vercelKvUrl, setVercelKvUrl,
-      vercelKvToken, setVercelKvToken,
-      supabaseUrl, setSupabaseUrl,
-      supabaseKey, setSupabaseKey,
       exportData, importData
   } = useApp();
 
   const [saved, setSaved] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'integrations' | 'data' | 'cloud'>('integrations');
+  const [activeTab, setActiveTab] = useState<'integrations' | 'data'>('integrations');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = (section: string) => {
@@ -63,16 +59,6 @@ const Settings: React.FC = () => {
                 Integrations
             </button>
             <button
-                onClick={() => setActiveTab('cloud')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
-                    activeTab === 'cloud'
-                    ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 shadow-sm'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                }`}
-            >
-                Cloud Database
-            </button>
-            <button
                 onClick={() => setActiveTab('data')}
                 className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
                     activeTab === 'data'
@@ -80,13 +66,31 @@ const Settings: React.FC = () => {
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                 }`}
             >
-                Backup & Restore
+                Data Management
             </button>
         </div>
       </div>
 
       {activeTab === 'integrations' && (
       <div className="space-y-8 animate-fadeIn">
+        {/* Connection Status Indicator */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-green-200 dark:border-green-900 overflow-hidden">
+             <div className="px-6 py-4 flex items-center gap-3">
+                 <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-full text-green-600 dark:text-green-400">
+                     <Database className="w-5 h-5" />
+                 </div>
+                 <div>
+                     <h3 className="font-bold text-gray-900 dark:text-white text-sm">Database Connected</h3>
+                     <p className="text-xs text-gray-500 dark:text-gray-400">
+                         Permanently connected to Anchor Computer Software Database (Supabase).
+                     </p>
+                 </div>
+                 <div className="ml-auto flex items-center gap-2 text-green-600 dark:text-green-400 text-xs font-bold px-3 py-1 bg-green-50 dark:bg-green-900/20 rounded-full border border-green-100 dark:border-green-800">
+                     <CheckCircle className="w-3 h-3" /> Active
+                 </div>
+             </div>
+        </div>
+
         {/* Topic Generator Webhook */}
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
@@ -251,149 +255,67 @@ const Settings: React.FC = () => {
       </div>
       )}
 
-      {activeTab === 'cloud' && (
-      <div className="space-y-8 animate-fadeIn">
-        {/* Supabase Configuration */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
-                <Database className="w-5 h-5 text-green-600 dark:text-green-400" />
-                <h3 className="font-semibold text-gray-800 dark:text-white">Supabase (PostgreSQL)</h3>
-            </div>
-            <div className="p-6 space-y-4">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Connect your Supabase database to persist topics in real-time. This is the recommended database for this application.
-                </p>
-
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Supabase URL</label>
-                        <input
-                            type="text"
-                            value={supabaseUrl}
-                            onChange={(e) => setSupabaseUrl(e.target.value)}
-                            placeholder="https://your-project-id.supabase.co"
-                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Supabase Anon Key</label>
-                        <input
-                            type="password"
-                            value={supabaseKey}
-                            onChange={(e) => setSupabaseKey(e.target.value)}
-                            placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
-                        />
-                    </div>
-                    <div className="pt-2">
-                        <button 
-                            onClick={() => handleSave('supabase')}
-                            className={`px-6 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${saved === 'supabase' ? 'bg-green-600 text-white' : 'bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 text-white'}`}
-                        >
-                            {saved === 'supabase' ? <CheckSquare className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                            {saved === 'supabase' ? 'Save Credentials' : 'Save Credentials'}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Database Setup Instructions */}
-                <div className="mt-6 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-                    <h4 className="text-sm font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 mb-3">
-                        <Server className="w-4 h-4" />
-                        Database Setup Guide
-                    </h4>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
-                        Run the following SQL in your Supabase SQL Editor to create the table and fix permission errors (42501):
-                    </p>
-                    <div className="bg-gray-800 text-gray-200 p-3 rounded-md font-mono text-xs overflow-x-auto border border-gray-700 relative">
-                        <pre>{`-- 1. Create table if it doesn't exist
-CREATE TABLE IF NOT EXISTS topics (
-  id text PRIMARY KEY,
-  data jsonb NOT NULL,
-  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now())
-);
-
--- 2. Enable RLS
-ALTER TABLE topics ENABLE ROW LEVEL SECURITY;
-
--- 3. Reset Policy (Prevents 'policy exists' errors)
-DROP POLICY IF EXISTS "Public Access" ON topics;
-
--- 4. Create Permissive Policy for this App
-CREATE POLICY "Public Access" ON topics
-FOR ALL
-USING (true)
-WITH CHECK (true);
-
--- 5. Grant Explicit Permissions (Fixes 42501 Error)
-GRANT ALL ON TABLE topics TO anon;
-GRANT ALL ON TABLE topics TO authenticated;
-GRANT ALL ON TABLE topics TO service_role;`}</pre>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        {/* Vercel KV (Legacy) */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden opacity-80">
-            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
-                <Cloud className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-                <h3 className="font-semibold text-gray-600 dark:text-gray-300">Vercel KV (Legacy / Backup)</h3>
-            </div>
-            <div className="p-6 space-y-4">
-                 <p className="text-xs text-gray-500 dark:text-gray-400 italic">
-                    Alternative storage method if Supabase is not available.
-                </p>
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">KV REST API URL</label>
-                        <input
-                            type="text"
-                            value={vercelKvUrl}
-                            onChange={(e) => setVercelKvUrl(e.target.value)}
-                            placeholder="https://...upstash.io"
-                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-gray-400 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">KV REST API Token</label>
-                        <input
-                            type="password"
-                            value={vercelKvToken}
-                            onChange={(e) => setVercelKvToken(e.target.value)}
-                            placeholder="Ad2s..."
-                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-gray-400 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
-                        />
-                    </div>
-                    <div className="pt-2">
-                        <button 
-                            onClick={() => handleSave('vercel_kv')}
-                            className={`px-6 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${saved === 'vercel_kv' ? 'bg-green-600 text-white' : 'bg-gray-600 hover:bg-gray-700 dark:bg-gray-600 dark:hover:bg-gray-500 text-white'}`}
-                        >
-                            {saved === 'vercel_kv' ? <CheckSquare className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                            {saved === 'vercel_kv' ? 'Save Credentials' : 'Save Credentials'}
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-      </div>
-      )}
-
       {activeTab === 'data' && (
       <div className="space-y-8 animate-fadeIn">
         {/* Sync / Load Database */}
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
                 <Database className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <h3 className="font-semibold text-gray-800 dark:text-white">Sync / Load Database (Legacy)</h3>
+                <h3 className="font-semibold text-gray-800 dark:text-white">Database Setup & Sync</h3>
             </div>
             <div className="p-6 space-y-4">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                    If you are not using Cloud Storage (Supabase/Vercel), you can sync from a generic JSON webhook.
+                    The application is connected to your Supabase database.
+                    Use the instructions below to ensure your database schema is correctly configured to store <strong>Generated Articles</strong>, <strong>Images</strong>, and <strong>Configuration</strong>.
                 </p>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Sync Webhook URL</label>
+                
+                {/* Database Setup Instructions */}
+                <div className="mt-6 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+                    <h4 className="text-sm font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 mb-3">
+                        <Server className="w-4 h-4" />
+                        Supabase SQL Setup
+                    </h4>
+                    <div className="space-y-3">
+                        <div className="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
+                             <Info className="w-4 h-4 mt-0.5 text-indigo-500" />
+                             <p>
+                                 The <code>data</code> column (JSONB) stores the entire topic object, including <strong>HTML Content</strong> and <strong>Featured Images</strong>. 
+                                 You do not need separate columns for these fields. Run this script in your Supabase SQL Editor to fix permissions or missing tables.
+                             </p>
+                        </div>
+                        <div className="bg-gray-800 text-gray-200 p-3 rounded-md font-mono text-xs overflow-x-auto border border-gray-700 relative">
+                            <pre>{`-- 1. Topics Table (Stores Metadata + Generated HTML + Images)
+CREATE TABLE IF NOT EXISTS topics (
+  id text PRIMARY KEY,
+  data jsonb NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now())
+);
+
+-- Enable RLS and Grant Access
+ALTER TABLE topics ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public Access" ON topics;
+CREATE POLICY "Public Access" ON topics FOR ALL USING (true) WITH CHECK (true);
+GRANT ALL ON TABLE topics TO anon;
+GRANT ALL ON TABLE topics TO service_role;
+
+-- 2. Configuration Table (Stores Angles)
+CREATE TABLE IF NOT EXISTS app_config (
+  key text PRIMARY KEY,
+  value jsonb
+);
+
+-- Enable RLS and Grant Access
+ALTER TABLE app_config ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public Config Access" ON app_config;
+CREATE POLICY "Public Config Access" ON app_config FOR ALL USING (true) WITH CHECK (true);
+GRANT ALL ON TABLE app_config TO anon;
+GRANT ALL ON TABLE app_config TO service_role;`}</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Legacy Sync Webhook URL (Optional)</label>
                     <div className="flex gap-2">
                         <input
                             type="url"
@@ -409,65 +331,6 @@ GRANT ALL ON TABLE topics TO service_role;`}</pre>
                             {saved === 'sync' ? <CheckSquare className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                             {saved === 'sync' ? 'Saved' : 'Save'}
                         </button>
-                    </div>
-                </div>
-
-                {/* Make.com Setup Instructions */}
-                <div className="mt-6 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-100 dark:border-indigo-900/30 p-5">
-                    <h4 className="text-sm font-bold text-indigo-900 dark:text-indigo-200 flex items-center gap-2 mb-3">
-                        <Info className="w-4 h-4" />
-                        How to setup the Make.com Scenario
-                    </h4>
-                    <div className="space-y-4 text-xs text-indigo-800 dark:text-indigo-300">
-                        <div className="flex items-start gap-3">
-                            <div className="bg-indigo-200 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200 font-bold rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">1</div>
-                            <div>
-                                <strong>Custom Webhook:</strong> Create a new scenario starting with a Custom Webhook. Copy the URL and paste it above.
-                            </div>
-                        </div>
-                        
-                        <div className="flex items-center justify-center">
-                            <ArrowRight className="w-4 h-4 text-indigo-300 dark:text-indigo-600 rotate-90" />
-                        </div>
-
-                        <div className="flex items-start gap-3">
-                            <div className="bg-indigo-200 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200 font-bold rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">2</div>
-                            <div>
-                                <strong>Get Data:</strong> Add a module to fetch your data (e.g., <em>Google Sheets: Search Rows</em>, <em>Airtable: Search Records</em>, or <em>Data Store: Search</em>). Remove any limits to fetch all rows.
-                            </div>
-                        </div>
-
-                        <div className="flex items-center justify-center">
-                            <ArrowRight className="w-4 h-4 text-indigo-300 dark:text-indigo-600 rotate-90" />
-                        </div>
-
-                        <div className="flex items-start gap-3">
-                            <div className="bg-indigo-200 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200 font-bold rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">3</div>
-                            <div>
-                                <strong>Array Aggregator:</strong> Add this Tool immediately after your search module.
-                                <ul className="list-disc list-inside mt-1 ml-1 opacity-80">
-                                    <li><strong>Source Module:</strong> Select your Search module.</li>
-                                    <li><strong>Target Structure:</strong> Custom.</li>
-                                    <li><strong>Fields:</strong> Map your columns (e.g., <code>id</code>, <code>title</code>, <code>keyword</code>, <code>product</code>, <code>status</code>, <code>html_content</code>).</li>
-                                </ul>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center justify-center">
-                            <ArrowRight className="w-4 h-4 text-indigo-300 dark:text-indigo-600 rotate-90" />
-                        </div>
-
-                        <div className="flex items-start gap-3">
-                            <div className="bg-indigo-200 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200 font-bold rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">4</div>
-                            <div>
-                                <strong>Webhook Response:</strong> Add this as the final module.
-                                <ul className="list-disc list-inside mt-1 ml-1 opacity-80">
-                                    <li><strong>Status:</strong> 200</li>
-                                    <li><strong>Body:</strong> Drag the <code>Array[]</code> output from the Aggregator here.</li>
-                                    <li><strong>Custom Headers:</strong> Add Key: <code>Content-Type</code>, Value: <code>application/json</code>.</li>
-                                </ul>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
