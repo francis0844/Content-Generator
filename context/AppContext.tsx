@@ -1,6 +1,9 @@
+
 import React, { createContext, useContext, useState, useEffect, ReactNode, PropsWithChildren } from 'react';
 import { Topic, TopicStatus, GeneratedContentData, ValidatorData, ProductDef } from '../types';
 import { fetchExternalData } from '../services/makeService';
+import { loadFromVercel, saveToVercel } from '../services/vercelService';
+import { fetchSupabaseTopics, saveSupabaseTopic, deleteSupabaseTopic } from '../services/supabaseService';
 
 // Defined Products List
 export const PRODUCTS: ProductDef[] = [
@@ -32,6 +35,14 @@ interface AppContextType {
   setArticleReviewWebhookUrl: (url: string) => void;
   draftingWebhookUrl: string;
   setDraftingWebhookUrl: (url: string) => void;
+  vercelKvUrl: string;
+  setVercelKvUrl: (url: string) => void;
+  vercelKvToken: string;
+  setVercelKvToken: (token: string) => void;
+  supabaseUrl: string;
+  setSupabaseUrl: (url: string) => void;
+  supabaseKey: string;
+  setSupabaseKey: (key: string) => void;
   addAngle: (type: 'preferred' | 'unpreferred', angle: string) => void;
   removeAngle: (type: 'preferred' | 'unpreferred', angle: string) => void;
   generateId: () => string;
@@ -67,15 +78,13 @@ const safeParse = (value: any) => {
     return value;
 };
 
-// Normalize function to ensure data structure consistency from various sources (Import, Sync, LocalStorage)
+// Normalize function to ensure data structure consistency from various sources
 const normalizeTopic = (t: any): Topic => {
   const id = t.id ? String(t.id) : generateId();
   
   // 1. Scavenge Generated Content
-  // CHECK t.content AS WELL: Many API/DB structures return 'content' instead of 'generatedContent'
   let generatedContent: GeneratedContentData | undefined = t.generatedContent || t.content;
   
-  // If we have flat fields but no object, create it from scratch
   if (!generatedContent && (t.content_html || t.html_content || t.htmlContent || t.featured_image || t.image)) {
       generatedContent = {
           title: t.title || 'Untitled',
@@ -92,9 +101,7 @@ const normalizeTopic = (t: any): Topic => {
       };
   }
   
-  // Ensure we populate rich data (SEO, Sections) from root if they exist there (Common in DB exports)
   if (generatedContent) {
-      // Merge flat properties into generatedContent if missing inside it
       if (!generatedContent.sections && t.sections) generatedContent.sections = safeParse(t.sections);
       if (!generatedContent.faq && t.faq) generatedContent.faq = safeParse(t.faq);
       if (!generatedContent.related_keywords && t.related_keywords) generatedContent.related_keywords = safeParse(t.related_keywords);
@@ -104,7 +111,6 @@ const normalizeTopic = (t: any): Topic => {
       if (!generatedContent.slug && t.slug) generatedContent.slug = t.slug;
       if (!generatedContent.focus_keyword && (t.focus_keyword || t.keyword)) generatedContent.focus_keyword = t.focus_keyword || t.keyword;
 
-      // Compatibility checks
       if (t.content_html && !generatedContent.content_html) generatedContent.content_html = t.content_html;
       if (t.html_content && !generatedContent.content_html) generatedContent.content_html = t.html_content;
       if (t.htmlContent && !generatedContent.content_html) generatedContent.content_html = t.htmlContent;
@@ -112,7 +118,6 @@ const normalizeTopic = (t: any): Topic => {
       if (t.image && !generatedContent.featured_image) generatedContent.featured_image = t.image;
       if (t.featured_image && !generatedContent.featured_image) generatedContent.featured_image = t.featured_image;
 
-      // Ensure arrays are arrays (fix for stringified JSON in DB)
       if (typeof generatedContent.sections === 'string') generatedContent.sections = safeParse(generatedContent.sections);
       if (typeof generatedContent.faq === 'string') generatedContent.faq = safeParse(generatedContent.faq);
       if (typeof generatedContent.related_keywords === 'string') generatedContent.related_keywords = safeParse(generatedContent.related_keywords);
@@ -122,21 +127,16 @@ const normalizeTopic = (t: any): Topic => {
   let validatorData: ValidatorData | undefined = t.validatorData;
   
   if (!validatorData) {
-      // Check for validator_response (common from webhook)
       const vResponse = t.validator_response || t.validatorResponse;
       
       if (vResponse) {
-          // It might be the result object itself or wrapped
-          // Try to parse if string first
           const parsedResponse = safeParse(vResponse);
-          
           const resultObj = parsedResponse.result || parsedResponse;
           validatorData = {
               validated_at: t.validated_at || new Date().toISOString(),
               result: safeParse(resultObj)
           };
       } else if (t.scores || t.summary || t.reasons) {
-          // Build from flat root keys (Common in flat DB exports)
           validatorData = {
               validated_at: t.validated_at || new Date().toISOString(),
               result: {
@@ -150,7 +150,6 @@ const normalizeTopic = (t: any): Topic => {
       }
   }
 
-  // Ensure validator result parts are parsed
   if (validatorData && validatorData.result) {
       if (typeof validatorData.result.scores === 'string') validatorData.result.scores = safeParse(validatorData.result.scores);
       if (typeof validatorData.result.reasons === 'string') validatorData.result.reasons = safeParse(validatorData.result.reasons);
@@ -158,7 +157,6 @@ const normalizeTopic = (t: any): Topic => {
   }
 
   // 3. Auto-Detect Status
-  // If we have content but status is pending, update it so it shows in the generated tab
   let status = t.status || TopicStatus.PENDING;
   if (
       generatedContent?.content_html && 
@@ -176,7 +174,6 @@ const normalizeTopic = (t: any): Topic => {
     id,
     keyword: t.keyword || 'Unknown Keyword',
     product: t.product || 'Unknown Product',
-    // Preserve pageId if it exists in source or mapped keys
     pageId: t.pageId || t.page_id || '', 
     title: t.title || 'Untitled Topic',
     angle: t.angle || '',
@@ -187,7 +184,6 @@ const normalizeTopic = (t: any): Topic => {
     createdAt: t.createdAt || new Date().toISOString(),
     generatedContent,
     validatorData,
-    // Ensure legacy htmlContent is synced for compatibility
     htmlContent: t.htmlContent || generatedContent?.content_html
   };
 };
@@ -197,12 +193,9 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     return (localStorage.getItem('topicGen_theme') as Theme) || 'light';
   });
 
-  // Load initial state from localStorage
   const [topics, setTopics] = useState<Topic[]>(() => {
     const saved = localStorage.getItem('topicGen_topics');
     let parsedTopics = saved ? JSON.parse(saved) : [];
-    
-    // Use normalization to heal any legacy or broken data on load
     return parsedTopics.map(normalizeTopic);
   });
 
@@ -224,33 +217,26 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     ];
   });
 
-  const [webhookUrl, setWebhookUrl] = useState<string>(() => {
-    return localStorage.getItem('topicGen_webhook') || 'https://hook.us2.make.com/p0fwplqxbb8dazf65l1mqoa0for1aoxj';
-  });
+  // Webhooks
+  const [webhookUrl, setWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_webhook') || 'https://hook.us2.make.com/p0fwplqxbb8dazf65l1mqoa0for1aoxj');
+  const [contentWebhookUrl, setContentWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_content_webhook') || 'https://hook.us2.make.com/x7617cbg9m44yeske2a1gpom9u1ntdsf');
+  const [feedbackWebhookUrl, setFeedbackWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_feedback_webhook') || 'https://hook.us2.make.com/vez8sh43oam4ew6e9qt0j2mjr82jynxt');
+  const [syncWebhookUrl, setSyncWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_sync_webhook') || '');
+  const [articleReviewWebhookUrl, setArticleReviewWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_article_review_webhook') || 'https://hook.us2.make.com/l4seaxq3m0pppc2fdu6zzfppj5guc6re');
+  const [draftingWebhookUrl, setDraftingWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_drafting_webhook') || 'https://hook.us2.make.com/hpg4g5b1tv6oq7teawrbwm923qm5bgin');
 
-  const [contentWebhookUrl, setContentWebhookUrl] = useState<string>(() => {
-    return localStorage.getItem('topicGen_content_webhook') || 'https://hook.us2.make.com/x7617cbg9m44yeske2a1gpom9u1ntdsf';
-  });
+  // Vercel KV Credentials
+  const [vercelKvUrl, setVercelKvUrl] = useState<string>(() => localStorage.getItem('topicGen_vercel_kv_url') || '');
+  const [vercelKvToken, setVercelKvToken] = useState<string>(() => localStorage.getItem('topicGen_vercel_kv_token') || '');
 
-  const [feedbackWebhookUrl, setFeedbackWebhookUrl] = useState<string>(() => {
-    return localStorage.getItem('topicGen_feedback_webhook') || 'https://hook.us2.make.com/vez8sh43oam4ew6e9qt0j2mjr82jynxt';
-  });
-
-  const [syncWebhookUrl, setSyncWebhookUrl] = useState<string>(() => {
-    return localStorage.getItem('topicGen_sync_webhook') || '';
-  });
-
-  const [articleReviewWebhookUrl, setArticleReviewWebhookUrl] = useState<string>(() => {
-    return localStorage.getItem('topicGen_article_review_webhook') || 'https://hook.us2.make.com/l4seaxq3m0pppc2fdu6zzfppj5guc6re';
-  });
-
-  const [draftingWebhookUrl, setDraftingWebhookUrl] = useState<string>(() => {
-    return localStorage.getItem('topicGen_drafting_webhook') || 'https://hook.us2.make.com/hpg4g5b1tv6oq7teawrbwm923qm5bgin';
-  });
+  // Supabase Credentials
+  const [supabaseUrl, setSupabaseUrl] = useState<string>(() => localStorage.getItem('topicGen_supabase_url') || '');
+  const [supabaseKey, setSupabaseKey] = useState<string>(() => localStorage.getItem('topicGen_supabase_key') || '');
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [contentGeneratingIds, setContentGeneratingIds] = useState<string[]>([]);
 
+  // Effect to Persist State
   useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -260,54 +246,62 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     localStorage.setItem('topicGen_theme', theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  useEffect(() => { localStorage.setItem('topicGen_topics', JSON.stringify(topics)); }, [topics]);
+  useEffect(() => { localStorage.setItem('topicGen_preferred', JSON.stringify(preferredAngles)); }, [preferredAngles]);
+  useEffect(() => { localStorage.setItem('topicGen_unpreferred', JSON.stringify(unpreferredAngles)); }, [unpreferredAngles]);
+  
+  // Persist Settings
+  useEffect(() => { localStorage.setItem('topicGen_webhook', webhookUrl); }, [webhookUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_content_webhook', contentWebhookUrl); }, [contentWebhookUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_feedback_webhook', feedbackWebhookUrl); }, [feedbackWebhookUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_sync_webhook', syncWebhookUrl); }, [syncWebhookUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_article_review_webhook', articleReviewWebhookUrl); }, [articleReviewWebhookUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_drafting_webhook', draftingWebhookUrl); }, [draftingWebhookUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_vercel_kv_url', vercelKvUrl); }, [vercelKvUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_vercel_kv_token', vercelKvToken); }, [vercelKvToken]);
+  useEffect(() => { localStorage.setItem('topicGen_supabase_url', supabaseUrl); }, [supabaseUrl]);
+  useEffect(() => { localStorage.setItem('topicGen_supabase_key', supabaseKey); }, [supabaseKey]);
+
+  // Helper to save specific topic to cloud (Supabase priority)
+  const saveTopicToCloud = async (topic: Topic) => {
+    if (supabaseUrl && supabaseKey) {
+        try {
+            await saveSupabaseTopic(supabaseUrl, supabaseKey, topic);
+        } catch (e: any) {
+            console.error("Supabase Save failed:", e.message || JSON.stringify(e));
+        }
+    } else if (vercelKvUrl && vercelKvToken) {
+        // Vercel KV is usually bulk save, but we can't easily update single item in simple list
+        // So we trigger the bulk save effect
+    }
   };
 
-  // Persist state
+  // Auto-Save to Vercel KV (Bulk) when topics change - ONLY if Supabase is NOT active
   useEffect(() => {
-    localStorage.setItem('topicGen_topics', JSON.stringify(topics));
-  }, [topics]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_preferred', JSON.stringify(preferredAngles));
-  }, [preferredAngles]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_unpreferred', JSON.stringify(unpreferredAngles));
-  }, [unpreferredAngles]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_webhook', webhookUrl);
-  }, [webhookUrl]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_content_webhook', contentWebhookUrl);
-  }, [contentWebhookUrl]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_feedback_webhook', feedbackWebhookUrl);
-  }, [feedbackWebhookUrl]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_sync_webhook', syncWebhookUrl);
-  }, [syncWebhookUrl]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_article_review_webhook', articleReviewWebhookUrl);
-  }, [articleReviewWebhookUrl]);
-
-  useEffect(() => {
-    localStorage.setItem('topicGen_drafting_webhook', draftingWebhookUrl);
-  }, [draftingWebhookUrl]);
+    if (vercelKvUrl && vercelKvToken && !supabaseUrl && topics.length > 0) {
+      const timeoutId = setTimeout(() => {
+        saveToVercel(vercelKvUrl, vercelKvToken, topics).catch(e => console.error("Vercel Auto-save failed", e));
+      }, 2000);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [topics, vercelKvUrl, vercelKvToken, supabaseUrl]);
 
   const addTopics = (newTopics: Topic[]) => {
     setTopics((prev) => [...newTopics, ...prev]);
+    // Save new topics to cloud
+    newTopics.forEach(t => saveTopicToCloud(t));
   };
 
   const updateTopicStatus = (id: string, status: TopicStatus) => {
     setTopics((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, status } : t))
+      prev.map((t) => {
+          if (t.id === id) {
+              const updated = { ...t, status };
+              saveTopicToCloud(updated);
+              return updated;
+          }
+          return t;
+      })
     );
   };
 
@@ -316,23 +310,16 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
       prev.map((t) => {
           if (t.id !== id) return t;
 
-          // Attempt to extract data whether it's nested or flat
           let generatedContent: GeneratedContentData | undefined = data.content;
           let validatorData: ValidatorData | undefined = data.validator_response;
 
-          // Handle "Flat" JSON Structure (User mapped fields to root)
-          // If 'content' key is missing but 'content_html' or 'featured_image' exists at root, use root as content
           if (!generatedContent && (data.content_html || data.html_content || data.h1 || data.featured_image || data.image)) {
-              // Copy root data to new object to avoid mutation
               generatedContent = { ...data };
-              
-              // Normalize root 'image' key if 'featured_image' is missing
               if (data.image && !generatedContent!.featured_image) {
                  generatedContent!.featured_image = data.image;
               }
           }
 
-          // If 'validator_response' key is missing but 'validated_at' exists at root, use root
           if (!validatorData && data.validated_at && data.result) {
               validatorData = {
                   validated_at: data.validated_at,
@@ -340,20 +327,24 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
               };
           }
 
-          // Return valid topic structure and normalize it immediately
-          return normalizeTopic({ 
+          const updatedTopic = normalizeTopic({ 
               ...t, 
               status: TopicStatus.CONTENT_GENERATED,
               generatedContent: generatedContent,
               validatorData: validatorData,
-              // Ensure legacy fallback is updated
               htmlContent: t.htmlContent || generatedContent?.content_html
           });
+          
+          saveTopicToCloud(updatedTopic);
+          return updatedTopic;
       })
     );
   };
 
   const deleteTopic = (id: string) => {
+    if (supabaseUrl && supabaseKey) {
+        deleteSupabaseTopic(supabaseUrl, supabaseKey, id).catch(e => console.error("Cloud delete failed", e));
+    }
     setTopics((prev) => prev.filter((t) => String(t.id) !== String(id)));
   };
 
@@ -382,26 +373,42 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   };
 
   const syncTopics = async () => {
-    if (!syncWebhookUrl) throw new Error("Sync Webhook URL not configured");
-    
-    const externalTopics = await fetchExternalData(syncWebhookUrl);
+    let externalTopics: Topic[] = [];
+
+    // Prioritize Supabase
+    if (supabaseUrl && supabaseKey) {
+        console.log("Syncing from Supabase...");
+        try {
+            externalTopics = await fetchSupabaseTopics(supabaseUrl, supabaseKey);
+        } catch (e: any) {
+            // Rethrow so the UI can show the error alert
+            throw new Error(`Supabase Sync Failed: ${e.message}`);
+        }
+    }
+    // Then Vercel KV
+    else if (vercelKvUrl && vercelKvToken) {
+        console.log("Syncing from Vercel KV...");
+        const cloudData = await loadFromVercel(vercelKvUrl, vercelKvToken);
+        if (cloudData) externalTopics = cloudData;
+    } 
+    // Fallback to Webhook
+    else if (syncWebhookUrl) {
+        console.log("Syncing from Webhook...");
+        externalTopics = await fetchExternalData(syncWebhookUrl);
+    } 
+    else {
+        throw new Error("No Sync method configured. Please add Supabase credentials, Vercel KV, or a Sync Webhook URL.");
+    }
     
     setTopics(currentTopics => {
-       // We explicitly type the Map here
        const currentMap = new Map<string, Topic>(currentTopics.map(t => [String(t.id), t]));
        
        externalTopics.forEach(ext => {
-           // If external data doesn't have an ID, we treat it as new and give it one
            const id = ext.id ? String(ext.id) : generateId();
-           
            const existing = currentMap.get(id);
-           
-           // Merge properties. Prioritize external data for updates.
+           // Merge: External data takes precedence for fields present in it
            const mergedRaw = existing ? { ...existing, ...ext } : { ...ext, id };
-           
-           // Normalize to ensure structure (e.g. mapping flat html_content to generatedContent)
            const normalized = normalizeTopic(mergedRaw);
-           
            currentMap.set(id, normalized);
        });
        
@@ -428,21 +435,23 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
         alert("Invalid data format: Expected an array of topics.");
         return;
       }
-      
-      // Validate, sanitize, and structure the imported data
       const importedTopics: Topic[] = parsed.map(normalizeTopic);
-
       setTopics(prev => {
          const topicMap = new Map(prev.map(t => [String(t.id), t]));
          importedTopics.forEach(t => topicMap.set(String(t.id), t));
          return Array.from(topicMap.values());
       });
-      
+      // Also save imported to cloud
+      importedTopics.forEach(t => saveTopicToCloud(t));
       alert(`Successfully imported ${importedTopics.length} topics.`);
     } catch (e: any) {
       console.error(e);
       alert("Failed to parse JSON file.");
     }
+  };
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
   return (
@@ -467,6 +476,14 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
         setArticleReviewWebhookUrl,
         draftingWebhookUrl,
         setDraftingWebhookUrl,
+        vercelKvUrl,
+        setVercelKvUrl,
+        vercelKvToken,
+        setVercelKvToken,
+        supabaseUrl,
+        setSupabaseUrl,
+        supabaseKey,
+        setSupabaseKey,
         addAngle,
         removeAngle,
         generateId,

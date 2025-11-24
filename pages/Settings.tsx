@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Save, Database, Webhook, FileText, MessageSquare, Download, Upload, CheckSquare, Server, Share2, Send, Info, Layers, ArrowRight } from 'lucide-react';
+import { Save, Database, Webhook, FileText, MessageSquare, Download, Upload, CheckSquare, Server, Share2, Send, Info, Layers, ArrowRight, Cloud } from 'lucide-react';
 
 const Settings: React.FC = () => {
   const { 
@@ -10,11 +10,15 @@ const Settings: React.FC = () => {
       syncWebhookUrl, setSyncWebhookUrl,
       articleReviewWebhookUrl, setArticleReviewWebhookUrl,
       draftingWebhookUrl, setDraftingWebhookUrl,
+      vercelKvUrl, setVercelKvUrl,
+      vercelKvToken, setVercelKvToken,
+      supabaseUrl, setSupabaseUrl,
+      supabaseKey, setSupabaseKey,
       exportData, importData
   } = useApp();
 
   const [saved, setSaved] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'integrations' | 'data'>('integrations');
+  const [activeTab, setActiveTab] = useState<'integrations' | 'data' | 'cloud'>('integrations');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = (section: string) => {
@@ -47,10 +51,10 @@ const Settings: React.FC = () => {
         </div>
         
         {/* Settings Tabs */}
-        <div className="flex bg-white dark:bg-gray-800 rounded-lg p-1 border border-gray-200 dark:border-gray-700 shadow-sm">
+        <div className="flex bg-white dark:bg-gray-800 rounded-lg p-1 border border-gray-200 dark:border-gray-700 shadow-sm overflow-x-auto">
             <button
                 onClick={() => setActiveTab('integrations')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
                     activeTab === 'integrations'
                     ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
@@ -59,14 +63,24 @@ const Settings: React.FC = () => {
                 Integrations
             </button>
             <button
+                onClick={() => setActiveTab('cloud')}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
+                    activeTab === 'cloud'
+                    ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+            >
+                Cloud Database
+            </button>
+            <button
                 onClick={() => setActiveTab('data')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
                     activeTab === 'data'
                     ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                 }`}
             >
-                Data Management
+                Backup & Restore
             </button>
         </div>
       </div>
@@ -91,7 +105,7 @@ const Settings: React.FC = () => {
                             value={webhookUrl}
                             onChange={(e) => setWebhookUrl(e.target.value)}
                             placeholder="https://hook.us2.make.com/..."
-                            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                            className="bg-white dark:bg-gray-750 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                         />
                         <button 
                             onClick={() => handleSave('topic')}
@@ -123,7 +137,7 @@ const Settings: React.FC = () => {
                             value={contentWebhookUrl}
                             onChange={(e) => setContentWebhookUrl(e.target.value)}
                             placeholder="https://hook.us2.make.com/..."
-                            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                            className="bg-white dark:bg-gray-750 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                         />
                         <button 
                             onClick={() => handleSave('content')}
@@ -155,7 +169,7 @@ const Settings: React.FC = () => {
                             value={feedbackWebhookUrl}
                             onChange={(e) => setFeedbackWebhookUrl(e.target.value)}
                             placeholder="https://hook.us2.make.com/..."
-                            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                            className="bg-white dark:bg-gray-750 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                         />
                         <button 
                             onClick={() => handleSave('feedback')}
@@ -189,7 +203,7 @@ const Settings: React.FC = () => {
                             value={articleReviewWebhookUrl}
                             onChange={(e) => setArticleReviewWebhookUrl(e.target.value)}
                             placeholder="https://hook.us2.make.com/..."
-                            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                            className="bg-white dark:bg-gray-750 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                         />
                         <button 
                             onClick={() => handleSave('article_review')}
@@ -212,7 +226,6 @@ const Settings: React.FC = () => {
             <div className="p-6 space-y-4">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
                     This webhook is triggered <strong>concurrently</strong> with the Article Review Webhook when an article is <strong>Approved/Drafted</strong>.
-                    It sends the same payload to a second destination (e.g., CMS or specialized database).
                 </p>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Drafting Webhook URL</label>
@@ -222,7 +235,7 @@ const Settings: React.FC = () => {
                             value={draftingWebhookUrl}
                             onChange={(e) => setDraftingWebhookUrl(e.target.value)}
                             placeholder="https://hook.us2.make.com/..."
-                            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                            className="bg-white dark:bg-gray-750 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                         />
                         <button 
                             onClick={() => handleSave('drafting')}
@@ -238,17 +251,146 @@ const Settings: React.FC = () => {
       </div>
       )}
 
+      {activeTab === 'cloud' && (
+      <div className="space-y-8 animate-fadeIn">
+        {/* Supabase Configuration */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
+                <Database className="w-5 h-5 text-green-600 dark:text-green-400" />
+                <h3 className="font-semibold text-gray-800 dark:text-white">Supabase (PostgreSQL)</h3>
+            </div>
+            <div className="p-6 space-y-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Connect your Supabase database to persist topics in real-time. This is the recommended database for this application.
+                </p>
+
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Supabase URL</label>
+                        <input
+                            type="text"
+                            value={supabaseUrl}
+                            onChange={(e) => setSupabaseUrl(e.target.value)}
+                            placeholder="https://your-project-id.supabase.co"
+                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Supabase Anon Key</label>
+                        <input
+                            type="password"
+                            value={supabaseKey}
+                            onChange={(e) => setSupabaseKey(e.target.value)}
+                            placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                        />
+                    </div>
+                    <div className="pt-2">
+                        <button 
+                            onClick={() => handleSave('supabase')}
+                            className={`px-6 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${saved === 'supabase' ? 'bg-green-600 text-white' : 'bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 text-white'}`}
+                        >
+                            {saved === 'supabase' ? <CheckSquare className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                            {saved === 'supabase' ? 'Save Credentials' : 'Save Credentials'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Database Setup Instructions */}
+                <div className="mt-6 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+                    <h4 className="text-sm font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 mb-3">
+                        <Server className="w-4 h-4" />
+                        Database Setup Guide
+                    </h4>
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                        Run the following SQL in your Supabase SQL Editor to create the table and fix permission errors (42501):
+                    </p>
+                    <div className="bg-gray-800 text-gray-200 p-3 rounded-md font-mono text-xs overflow-x-auto border border-gray-700 relative">
+                        <pre>{`-- 1. Create table if it doesn't exist
+CREATE TABLE IF NOT EXISTS topics (
+  id text PRIMARY KEY,
+  data jsonb NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now())
+);
+
+-- 2. Enable RLS
+ALTER TABLE topics ENABLE ROW LEVEL SECURITY;
+
+-- 3. Reset Policy (Prevents 'policy exists' errors)
+DROP POLICY IF EXISTS "Public Access" ON topics;
+
+-- 4. Create Permissive Policy for this App
+CREATE POLICY "Public Access" ON topics
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- 5. Grant Explicit Permissions (Fixes 42501 Error)
+GRANT ALL ON TABLE topics TO anon;
+GRANT ALL ON TABLE topics TO authenticated;
+GRANT ALL ON TABLE topics TO service_role;`}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* Vercel KV (Legacy) */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden opacity-80">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                <h3 className="font-semibold text-gray-600 dark:text-gray-300">Vercel KV (Legacy / Backup)</h3>
+            </div>
+            <div className="p-6 space-y-4">
+                 <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                    Alternative storage method if Supabase is not available.
+                </p>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">KV REST API URL</label>
+                        <input
+                            type="text"
+                            value={vercelKvUrl}
+                            onChange={(e) => setVercelKvUrl(e.target.value)}
+                            placeholder="https://...upstash.io"
+                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-gray-400 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">KV REST API Token</label>
+                        <input
+                            type="password"
+                            value={vercelKvToken}
+                            onChange={(e) => setVercelKvToken(e.target.value)}
+                            placeholder="Ad2s..."
+                            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-gray-400 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                        />
+                    </div>
+                    <div className="pt-2">
+                        <button 
+                            onClick={() => handleSave('vercel_kv')}
+                            className={`px-6 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${saved === 'vercel_kv' ? 'bg-green-600 text-white' : 'bg-gray-600 hover:bg-gray-700 dark:bg-gray-600 dark:hover:bg-gray-500 text-white'}`}
+                        >
+                            {saved === 'vercel_kv' ? <CheckSquare className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                            {saved === 'vercel_kv' ? 'Save Credentials' : 'Save Credentials'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      </div>
+      )}
+
       {activeTab === 'data' && (
       <div className="space-y-8 animate-fadeIn">
         {/* Sync / Load Database */}
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
                 <Database className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <h3 className="font-semibold text-gray-800 dark:text-white">Sync / Load Database</h3>
+                <h3 className="font-semibold text-gray-800 dark:text-white">Sync / Load Database (Legacy)</h3>
             </div>
             <div className="p-6 space-y-4">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Connect to a webhook that returns a list of topics (JSON) to sync external data into this dashboard. This is useful for restoring state from a database like Airtable or Google Sheets.
+                    If you are not using Cloud Storage (Supabase/Vercel), you can sync from a generic JSON webhook.
                 </p>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Sync Webhook URL</label>
@@ -258,7 +400,7 @@ const Settings: React.FC = () => {
                             value={syncWebhookUrl}
                             onChange={(e) => setSyncWebhookUrl(e.target.value)}
                             placeholder="https://hook.us2.make.com/..."
-                            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-750"
+                            className="bg-white dark:bg-gray-750 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                         />
                         <button 
                             onClick={() => handleSave('sync')}
@@ -335,11 +477,11 @@ const Settings: React.FC = () => {
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
                 <Server className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <h3 className="font-semibold text-gray-800 dark:text-white">Data Backup & Restore</h3>
+                <h3 className="font-semibold text-gray-800 dark:text-white">Manual Backup & Restore</h3>
             </div>
             <div className="p-6">
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                    Manually backup your data to a JSON file or restore from a previous backup. This allows you to persist data between sessions if local storage is cleared.
+                    Manually backup your data to a JSON file or restore from a previous backup.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4">
                     <button

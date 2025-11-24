@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, List, Settings, ThumbsUp, FileText, RefreshCw, Moon, Sun, Menu, X } from 'lucide-react';
+import { LayoutDashboard, List, Settings, ThumbsUp, FileText, RefreshCw, Moon, Sun, Menu, X, Cloud, Database } from 'lucide-react';
 import { ViewState } from '../types';
 import { useApp } from '../context/AppContext';
 
@@ -10,13 +10,13 @@ interface LayoutProps {
 }
 
 const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }) => {
-  const { isGenerating, syncTopics, syncWebhookUrl, theme, toggleTheme } = useApp();
+  const { isGenerating, syncTopics, syncWebhookUrl, vercelKvUrl, supabaseUrl, theme, toggleTheme } = useApp();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const handleSync = async () => {
-    if (!syncWebhookUrl) {
-        alert('Please configure the Sync Webhook URL in Settings first.');
+    if (!syncWebhookUrl && !vercelKvUrl && !supabaseUrl) {
+        alert('Please configure a Sync Method (Supabase, Vercel KV, or Webhook) in Settings first.');
         setCurrentView('settings');
         return;
     }
@@ -96,9 +96,15 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
                         ? 'text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20' 
                         : 'text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-indigo-400'
                     }`}
-                    title="Sync Data"
+                    title={supabaseUrl ? "Sync with Supabase" : vercelKvUrl ? "Sync with Vercel KV" : "Sync Data"}
                   >
-                     <RefreshCw className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
+                     {supabaseUrl ? (
+                         <Database className={`w-5 h-5 ${isSyncing ? 'animate-pulse' : ''}`} />
+                     ) : vercelKvUrl ? (
+                         <Cloud className={`w-5 h-5 ${isSyncing ? 'animate-pulse' : ''}`} />
+                     ) : (
+                         <RefreshCw className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
+                     )}
                      <span className="hidden lg:inline ml-2">{isSyncing ? 'Syncing...' : 'Sync'}</span>
                   </button>
 
