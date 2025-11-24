@@ -75,6 +75,9 @@ export interface Topic {
   generatedContent?: GeneratedContentData;
   validatorData?: ValidatorData;
   htmlContent?: string;
+  
+  // Explicit DB field for image
+  img_url?: string;
 }
 
 export interface GenerationRequest {

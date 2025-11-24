@@ -86,7 +86,7 @@ const normalizeTopic = (t: any): Topic => {
   // If generatedContent is missing, check if we have enough root-level data to build it
   if (!generatedContent) {
       const hasContent = t.content_html || t.html_content || t.htmlContent || t.body || 
-                         t.featured_image || t.image || t.imageUrl || t.img || 
+                         t.featured_image || t.image || t.imageUrl || t.img || t.img_url ||
                          t.seo_title || t.seoTitle;
       
       if (hasContent) {
@@ -108,9 +108,9 @@ const normalizeTopic = (t: any): Topic => {
   
   // If we have a generated content object (either existing or newly created), populate it aggressively
   if (generatedContent) {
-      // Helper to populate a field if missing in generatedContent but present in root `t`
+      // Helper to populate a field if missing in generatedContent but present in root `t` OR aliased inside generatedContent
       const populateField = (targetKey: keyof GeneratedContentData, sourceKeys: string[], isArray = false) => {
-          // If already populated, skip
+          // If already populated correctly, skip
           if ((generatedContent as any)[targetKey]) {
               const val = (generatedContent as any)[targetKey];
               if (isArray && Array.isArray(val) && val.length > 0) return;
@@ -119,8 +119,15 @@ const normalizeTopic = (t: any): Topic => {
 
           // Look in source keys
           for (const key of sourceKeys) {
-              if (t[key]) {
-                  const val = t[key];
+              // Check Root Topic First
+              let val = t[key];
+              
+              // If not found at root, check inside generatedContent itself (e.g. casing mismatch like seoTitle vs seo_title)
+              if (val === undefined || val === null) {
+                   val = (generatedContent as any)[key];
+              }
+
+              if (val) {
                   if (isArray) {
                       (generatedContent as any)[targetKey] = safeParse(val);
                   } else {
@@ -146,8 +153,8 @@ const normalizeTopic = (t: any): Topic => {
       // --- Aggressive Image Scavenging ---
       // Check all possible locations for the image URL
       const imgSources = [
-          t.featured_image, t.featuredImage, t.image, t.imageUrl, t.img, t.src, t.picture,
-          generatedContent.featured_image, (generatedContent as any).image, (generatedContent as any).imageUrl, (generatedContent as any).img
+          t.featured_image, t.featuredImage, t.image, t.imageUrl, t.img, t.src, t.picture, t.img_url,
+          generatedContent.featured_image, (generatedContent as any).image, (generatedContent as any).imageUrl, (generatedContent as any).img, (generatedContent as any).img_url
       ];
       
       const foundImg = imgSources.find(i => i && typeof i === 'string' && i.length > 5 && (i.startsWith('http') || i.startsWith('data:image')));
@@ -230,6 +237,7 @@ const normalizeTopic = (t: any): Topic => {
     aiReason: t.aiReason || t.ai_reason || '',
     status: status,
     createdAt: t.createdAt || new Date().toISOString(),
+    img_url: t.img_url || generatedContent?.featured_image, // Sync top-level img_url
     generatedContent,
     validatorData,
     htmlContent: t.htmlContent || generatedContent?.content_html
@@ -345,7 +353,7 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
       
       // Ensure image is captured if present at root data or legacy fields
       if (generatedContent) {
-          const rawImage = data.image || data.imageUrl || data.featured_image || data.img;
+          const rawImage = data.image || data.imageUrl || data.featured_image || data.img || data.img_url;
           if (rawImage && !generatedContent.featured_image) {
               generatedContent.featured_image = cleanString(rawImage);
           }
@@ -378,6 +386,11 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
           validatorData: validatorData,
           htmlContent: existingTopic.htmlContent || generatedContent?.content_html
       });
+      
+      // Explicitly sync img_url for persistence if it was found in content
+      if (generatedContent?.featured_image) {
+          (updatedTopic as any).img_url = generatedContent.featured_image;
+      }
       
       topicToSave = updatedTopic;
       
