@@ -1,0 +1,5 @@
+{
+  "name": "TopicGen V2 UI",
+  "description": "A frontend interface for the Topic Generation AI Agent using Make.com automation.",
+  "requestFramePermissions": []
+}
