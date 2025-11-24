@@ -1,3 +1,4 @@
+
 import { createClient } from '@supabase/supabase-js';
 import { Topic } from '../types';
 
@@ -23,12 +24,19 @@ export const fetchSupabaseTopics = async (): Promise<Topic[]> => {
   }
   
   if (!data) return [];
+  
+  // console.log(`Fetched ${data.length} topics from Supabase`); // Debug Log
 
   return data.map((row: any) => {
       // Safety Check: Handle double-nested data (e.g., row.data.data)
       // This happens if the save payload was { data: { ...topic } } instead of just { ...topic }
       if (row.data && row.data.data && typeof row.data.data === 'object') {
           return { ...row.data.data, id: row.id };
+      }
+
+      // Safety Check: Handle wrapping in a "topic" key (common artifact)
+      if (row.data && row.data.topic && typeof row.data.topic === 'object') {
+          return { ...row.data.topic, id: row.id };
       }
 
       // Check if data column exists (JSONB pattern) as per setup instructions

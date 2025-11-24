@@ -1,5 +1,6 @@
+
 import React, { createContext, useContext, useState, useEffect, ReactNode, PropsWithChildren } from 'react';
-import { Topic, TopicStatus, GeneratedContentData, ValidatorData, ProductDef } from '../types';
+import { Topic, TopicStatus, GeneratedContentData, ValidatorData, ProductDef, ContentSection } from '../types';
 import { fetchExternalData } from '../services/makeService';
 import { fetchSupabaseTopics, saveSupabaseTopic, deleteSupabaseTopic, fetchAppConfig, saveAppConfig } from '../services/supabaseService';
 
@@ -51,44 +52,153 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Robust ID generator that doesn't rely on external libraries
+// Robust ID generator
 const generateId = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
-// Helper to safely parse JSON if it's a string, otherwise return as is
-const safeParse = (value: any) => {
-    if (typeof value === 'string') {
-        try {
-            return JSON.parse(value);
-        } catch (e) {
-            return value; // Return original string if parse fails (might be just a string)
+// Helper to safely parse JSON if it's a string, cleaning up common AI artifacts
+const robustParse = (value: any) => {
+    if (typeof value !== 'string') return value;
+    
+    // Attempt basic parse
+    try {
+        return JSON.parse(value);
+    } catch (e) {
+        // Cleanup Markdown code blocks
+        let clean = value.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        // Cleanup escaped newlines/quotes loosely
+        clean = clean.trim();
+        try { return JSON.parse(clean); } catch (e2) { return value; }
+    }
+};
+
+// Helper to clean strings (remove quotes, markdown images)
+const cleanString = (val: any): string => {
+    if (typeof val !== 'string') return '';
+    
+    let clean = val.trim();
+    
+    // 1. Remove surrounding quotes
+    clean = clean.replace(/^["']|["']$/g, '').trim();
+    
+    // 2. Handle Markdown image syntax: ![Alt](url) or [Alt](url)
+    const mdMatch = clean.match(/!?\[.*?\]\((https?:\/\/[^)]+)\)/);
+    if (mdMatch && mdMatch[1]) return mdMatch[1];
+
+    // 3. Handle parenthesized or bracketed url: (http://...) or [http://...]
+    const wrapperMatch = clean.match(/^[\(\[]\s*(https?:\/\/[^)\]]+)\s*[\)\]]$/);
+    if (wrapperMatch && wrapperMatch[1]) return wrapperMatch[1];
+    
+    // 4. Fallback: If the string is not a valid URL but contains one, extract it.
+    // E.g. "Here is the image: https://..."
+    if (!clean.match(/^(https?:\/\/|\/|data:)/i)) {
+        const urlMatch = clean.match(/(https?:\/\/[^\s"'\)]+)/);
+        if (urlMatch && urlMatch[1]) return urlMatch[1];
+    }
+
+    // 5. Cleanup trailing punctuation that might have been captured (.,;)
+    clean = clean.replace(/[\.,;]$/, '');
+
+    return clean;
+};
+
+// --- RECURSIVE FINDER ---
+const findValueByKey = (obj: any, targetKey: string, depth = 0): any => {
+    if (!obj || typeof obj !== 'object' || depth > 8) return undefined;
+    
+    // 0. Dot Notation Handling (e.g. "seo.title")
+    if (targetKey.includes('.')) {
+        const parts = targetKey.split('.');
+        const rootKey = parts[0];
+        const restKey = parts.slice(1).join('.');
+        
+        const rootObj = findValueByKey(obj, rootKey, depth);
+        if (rootObj && typeof rootObj === 'object') {
+            return findValueByKey(rootObj, restKey, 0);
+        }
+        return undefined;
+    }
+    
+    // 1. Direct match (Case Insensitive Check)
+    const keys = Object.keys(obj);
+    const lowerTarget = targetKey.toLowerCase();
+    for (const k of keys) {
+        if (k.toLowerCase() === lowerTarget) {
+            if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
         }
     }
-    return value;
-};
+    
+    // 2. Snake case match
+    const snake = targetKey.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    if (obj[snake] !== undefined && obj[snake] !== null && obj[snake] !== '') return obj[snake];
+    
+    // 3. Camel case match
+    const camel = targetKey.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+    if (obj[camel] !== undefined && obj[camel] !== null && obj[camel] !== '') return obj[camel];
 
-// Helper to clean strings (remove quotes)
-const cleanString = (val: any): string => {
-    if (typeof val === 'string') {
-        return val.replace(/^["']|["']$/g, '').trim();
+    // 4. Recursive search in children
+    for (const key in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            const val = obj[key];
+            
+            if (typeof val === 'object' && val !== null) {
+                // Handle Arrays by searching inside elements
+                if (Array.isArray(val)) {
+                    // Search first few elements to avoid massive loops
+                    for (let i = 0; i < Math.min(val.length, 3); i++) {
+                        const item = val[i];
+                        if (typeof item === 'object') {
+                            const found = findValueByKey(item, targetKey, depth + 1);
+                            if (found !== undefined) return found;
+                        }
+                    }
+                } else {
+                    // Handle Objects
+                    const found = findValueByKey(val, targetKey, depth + 1);
+                    if (found !== undefined) return found;
+                }
+            }
+        }
     }
-    return '';
+    return undefined;
 };
 
-// Normalize function to ensure data structure consistency from various sources
+// Merges properties from nested objects (like 'seo', 'structure') into the main object
+const scavengeObjects = (source: any, target: any, keys: string[]) => {
+    keys.forEach(k => {
+        const val = findValueByKey(source, k);
+        if (val && typeof val === 'object' && !Array.isArray(val)) {
+            // We use a safe merge to not overwrite existing non-empty keys
+            Object.keys(val).forEach(subKey => {
+                if (!target[subKey]) target[subKey] = val[subKey];
+            });
+        }
+    });
+};
+
+// Normalize function to ensure data structure consistency
 const normalizeTopic = (t: any): Topic => {
   const id = t.id ? String(t.id) : generateId();
   
+  // PRE-EXPANSION: Parse stringified fields
+  const expandKeys = ['content', 'generatedContent', 'seo', 'seo_data', 'metadata', 'structure', 'outline', 'validator_response', 'scores', 'Scores', 'result'];
+  expandKeys.forEach(k => {
+     // Try finding the key recursively first, just in case it's nested
+     const found = findValueByKey(t, k);
+     if (found && typeof found === 'string') {
+         // Determine where to set it back... complicated if deep. 
+         // For now, if it's at root `t[k]`, parse it.
+         if (t[k]) t[k] = robustParse(t[k]);
+     }
+  });
+
   // 1. Scavenge Generated Content
-  let generatedContent: GeneratedContentData | undefined = t.generatedContent || t.content;
+  let generatedContent: GeneratedContentData | undefined = t.generatedContent || (typeof t.content === 'object' ? t.content : undefined);
   
-  // If generatedContent is missing, check if we have enough root-level data to build it
   if (!generatedContent) {
-      const hasContent = t.content_html || t.html_content || t.htmlContent || t.body || 
-                         t.featured_image || t.image || t.imageUrl || t.img || t.img_url ||
-                         t.seo_title || t.seoTitle;
-      
+      // Fallback: Create basic object if content is found elsewhere
+      const hasContent = findValueByKey(t, 'content_html') || findValueByKey(t, 'html_content');
       if (hasContent) {
           generatedContent = {
               title: t.title || 'Untitled',
@@ -98,131 +208,259 @@ const normalizeTopic = (t: any): Topic => {
               faq: [],
               focus_keyword: t.focus_keyword || t.keyword || '',
               related_keywords: [],
-              seo_title: t.seo_title || '',
-              meta_description: t.meta_description || '',
-              content_html: t.content_html || t.html_content || t.htmlContent || '',
+              seo_title: '',
+              meta_description: '',
+              content_html: hasContent,
               featured_image: ''
           };
       }
   }
-  
-  // If we have a generated content object (either existing or newly created), populate it aggressively
+
   if (generatedContent) {
-      // Helper to populate a field if missing in generatedContent but present in root `t` OR aliased inside generatedContent
-      const populateField = (targetKey: keyof GeneratedContentData, sourceKeys: string[], isArray = false) => {
-          // If already populated correctly, skip
+      // Flatten SEO/Structure objects into generatedContent for easier access
+      scavengeObjects(t, generatedContent, ['seo', 'seo_data', 'metadata', 'structure', 'outline', 'content']);
+
+      // Populate Helper
+      const populateField = (targetKey: keyof GeneratedContentData, searchKeys: string[], isArray = false) => {
+          // Check if already exists and is valid
           if ((generatedContent as any)[targetKey]) {
               const val = (generatedContent as any)[targetKey];
               if (isArray && Array.isArray(val) && val.length > 0) return;
-              if (!isArray && val) return;
+              if (!isArray && val && val !== '-') return;
           }
 
-          // Look in source keys
-          for (const key of sourceKeys) {
-              // Check Root Topic First
-              let val = t[key];
-              
-              // If not found at root, check inside generatedContent itself (e.g. casing mismatch like seoTitle vs seo_title)
-              if (val === undefined || val === null) {
-                   val = (generatedContent as any)[key];
-              }
-
-              if (val) {
+          for (const key of searchKeys) {
+             const val = findValueByKey(t, key);
+             if (val !== undefined && val !== null && val !== '') {
+                  const parsed = isArray ? robustParse(val) : val;
                   if (isArray) {
-                      (generatedContent as any)[targetKey] = safeParse(val);
+                      if (Array.isArray(parsed)) (generatedContent as any)[targetKey] = parsed;
                   } else {
-                      (generatedContent as any)[targetKey] = val;
+                      (generatedContent as any)[targetKey] = parsed;
                   }
-                  break; 
-              }
+                  return;
+             }
           }
       };
 
-      // Mappings for robust data scavenging
-      populateField('seo_title', ['seo_title', 'seoTitle', 'meta_title']);
-      populateField('meta_description', ['meta_description', 'metaDescription', 'description', 'meta_desc']);
-      populateField('focus_keyword', ['focus_keyword', 'focusKeyword', 'keyword']);
-      populateField('slug', ['slug', 'url_slug', 'urlSlug']);
-      populateField('h1', ['h1', 'headline', 'title']);
-      populateField('content_html', ['content_html', 'html_content', 'htmlContent', 'body', 'content', 'article_html']);
+      // Mappings
+      populateField('seo_title', ['seo_title', 'meta_title', 'title_tag', 'seo.title', 'seo.seo_title', 'metadata.title']);
+      populateField('meta_description', ['meta_description', 'meta_desc', 'description', 'seo.description', 'seo_description', 'seo.meta_description', 'summary', 'short_description']);
+      populateField('focus_keyword', ['focus_keyword', 'keyword', 'seo.keyword']);
+      populateField('slug', ['slug', 'url_slug', 'seo.slug']);
+      populateField('h1', ['h1', 'headline']);
+      populateField('content_html', ['content_html', 'html_content', 'article_body', 'body_html']);
       
-      populateField('sections', ['sections', 'outline', 'structure'], true);
-      populateField('faq', ['faq', 'faqs', 'qna', 'questions'], true);
-      populateField('related_keywords', ['related_keywords', 'relatedKeywords', 'keywords', 'tags'], true);
+      populateField('sections', ['sections', 'outline', 'structure', 'content_structure', 'structure.sections'], true);
+      populateField('faq', ['faq', 'faqs', 'qna', 'questions', 'faq_schema'], true);
+      populateField('related_keywords', ['related_keywords', 'keywords', 'tags'], true);
 
       // --- Aggressive Image Scavenging ---
-      // Check all possible locations for the image URL
-      const imgSources = [
-          t.featured_image, t.featuredImage, t.image, t.imageUrl, t.img, t.src, t.picture, t.img_url,
-          generatedContent.featured_image, (generatedContent as any).image, (generatedContent as any).imageUrl, (generatedContent as any).img, (generatedContent as any).img_url
-      ];
+      // We look for any key that might hold an image URL
+      const foundImg = findValueByKey(t, 'featured_image') || 
+                       findValueByKey(t, 'img_url') || 
+                       findValueByKey(t, 'image') || 
+                       findValueByKey(t, 'imageUrl') || 
+                       findValueByKey(t, 'src');
       
-      const foundImg = imgSources.find(i => i && typeof i === 'string' && i.length > 5 && (i.startsWith('http') || i.startsWith('data:image')));
-      if (foundImg) {
-          generatedContent.featured_image = cleanString(foundImg);
+      if (foundImg && typeof foundImg === 'string' && foundImg.length > 5) {
+          const cleaned = cleanString(foundImg);
+          // Basic validation to ensure it looks like a url or path
+          if (cleaned.match(/^(https?:\/\/|\/|data:)/i)) {
+             generatedContent.featured_image = cleaned;
+          }
+      }
+
+      // Fallback: Extract from content_html if no other image found
+      if (!generatedContent.featured_image && generatedContent.content_html) {
+          const imgMatch = generatedContent.content_html.match(/<img[^>]+src=["']([^"']+)["']/i);
+          if (imgMatch && imgMatch[1]) {
+              const cleaned = cleanString(imgMatch[1]);
+              if (cleaned.match(/^(https?:\/\/|\/|data:)/i)) {
+                  generatedContent.featured_image = cleaned;
+              }
+          }
       }
       
-      // Ensure arrays are actually arrays (parse stringified JSON if needed)
-      if (typeof generatedContent.sections === 'string') generatedContent.sections = safeParse(generatedContent.sections);
-      if (typeof generatedContent.faq === 'string') generatedContent.faq = safeParse(generatedContent.faq);
-      if (typeof generatedContent.related_keywords === 'string') generatedContent.related_keywords = safeParse(generatedContent.related_keywords);
+      // --- Data Structure Normalization ---
       
-      // Safety: Ensure fields are at least empty strings if still undefined
-      if (!generatedContent.seo_title) generatedContent.seo_title = '';
-      if (!generatedContent.meta_description) generatedContent.meta_description = '';
+      // Fix Sections: Convert string arrays or key-value objects to ContentSection[]
+      if (generatedContent.sections) {
+          if (Array.isArray(generatedContent.sections)) {
+               // Handle ["Heading"] -> [{ heading: "Heading" }]
+               if (generatedContent.sections.length > 0 && typeof generatedContent.sections[0] === 'string') {
+                   generatedContent.sections = (generatedContent.sections as any[]).map(s => ({ heading: s, key_points: [] }));
+               }
+          } else if (typeof generatedContent.sections === 'object') {
+              // Handle { "Intro": ["point"] } -> [{ heading: "Intro", key_points: ["point"] }]
+              generatedContent.sections = Object.entries(generatedContent.sections).map(([k, v]) => ({
+                  heading: k,
+                  key_points: Array.isArray(v) ? v : [String(v)]
+              }));
+          } else if (typeof generatedContent.sections === 'string') {
+              // Handle Text Block "1. Heading\n2. Heading"
+              const str = generatedContent.sections as string;
+              const lines = str.split('\n').filter(l => l.trim().length > 0);
+              generatedContent.sections = lines.map(line => ({ 
+                  heading: line.replace(/^\d+[\.:]\s*/, '').replace(/\*\*/g, '').trim(), 
+                  key_points: [] 
+              }));
+          }
+      }
+
+      // Fix FAQ: Convert strings to objects
+      if (Array.isArray(generatedContent.faq)) {
+           generatedContent.faq = generatedContent.faq.map((f: any) => {
+               if (typeof f === 'string') return { q: f, a_outline: [] };
+               if (f.question && !f.q) f.q = f.question;
+               if (f.answer && !f.a_outline) f.a_outline = [f.answer];
+               return f;
+           });
+      }
+      
+      if (!generatedContent.seo_title) generatedContent.seo_title = t.title || '';
   }
 
   // 2. Scavenge Validator Data
-  let validatorData: ValidatorData | undefined = t.validatorData;
+  // Important: Create a mutable copy to avoid modifying read-only state objects
+  let validatorData: ValidatorData | undefined = t.validatorData ? { ...t.validatorData } : undefined;
   
   if (!validatorData) {
-      // Check for validator response at root or nested
-      const vResponse = t.validator_response || t.validatorResponse;
-      
-      if (vResponse) {
-          const parsedResponse = safeParse(vResponse);
-          // Sometimes the response is directly the result, sometimes it wraps it
-          const resultObj = parsedResponse.result || parsedResponse;
-          
+      // Search for consolidated objects first
+      const result = findValueByKey(t, 'validator_response') || findValueByKey(t, 'validator_result') || findValueByKey(t, 'validation_data');
+      if (result) {
+          const parsed = robustParse(result);
+          const actualResult = parsed.result || parsed;
           validatorData = {
               validated_at: t.validated_at || new Date().toISOString(),
-              result: safeParse(resultObj)
-          };
-      } else if (t.scores || t.summary || t.reasons) {
-          // Reconstruct from flat fields
-          validatorData = {
-              validated_at: t.validated_at || new Date().toISOString(),
-              result: {
-                  scores: safeParse(t.scores),
-                  summary: t.summary,
-                  reasons: safeParse(t.reasons),
-                  recommendations: safeParse(t.recommendations),
-                  status: t.validator_status || 'completed'
-              }
+              result: (typeof actualResult === 'object' && actualResult !== null) ? actualResult : {}
           };
       }
   }
 
-  // Normalize validator result internal structures
-  if (validatorData && validatorData.result) {
-      if (typeof validatorData.result.scores === 'string') validatorData.result.scores = safeParse(validatorData.result.scores);
-      if (typeof validatorData.result.reasons === 'string') validatorData.result.reasons = safeParse(validatorData.result.reasons);
-      if (typeof validatorData.result.recommendations === 'string') validatorData.result.recommendations = safeParse(validatorData.result.recommendations);
+  // Check if we found validatorData but it's missing scores, OR if we never found it
+  // In either case, run the manual score scavenger to find stray score keys
+  let scoresFound = validatorData?.result?.scores;
+  
+  // Try finding scores object using multiple possible key names
+  if (!scoresFound) {
+      scoresFound = findValueByKey(t, 'scores') || findValueByKey(t, 'Scores');
+      if (scoresFound) scoresFound = robustParse(scoresFound);
   }
 
-  // 3. Auto-Detect Status
+  // If still no scores object, look for individual score keys at root or anywhere
+  // We use a mapping to handle spaced keys like "B2B Tone" which might not be caught by simple snake_case conversion
+  if (!scoresFound) {
+       const individualScores: any = {};
+       const scoreKeys = [
+           { key: 'b2b_tone', alts: ['B2B Tone', 'b2b tone', 'Tone'] },
+           { key: 'brand_alignment', alts: ['Brand Alignment', 'brand alignment', 'Alignment'] },
+           { key: 'structure', alts: ['Structure', 'structure'] },
+           { key: 'accuracy', alts: ['Accuracy', 'accuracy'] },
+           { key: 'enterprise_relevance', alts: ['Enterprise Relevance', 'enterprise relevance', 'Relevance'] }
+       ];
+
+       let foundAny = false;
+       scoreKeys.forEach(item => {
+           // Search for main key
+           let val = findValueByKey(t, item.key);
+           
+           // Search alts if not found
+           if (val === undefined) {
+               for (const alt of item.alts) {
+                   val = findValueByKey(t, alt);
+                   if (val !== undefined) break;
+               }
+           }
+
+           // Handle "8/10" string format
+           if (typeof val === 'string' && val.includes('/')) {
+               val = val.split('/')[0];
+           }
+
+           if (val !== undefined && !isNaN(Number(val))) {
+               individualScores[item.key] = Number(val);
+               foundAny = true;
+           }
+       });
+       if (foundAny) scoresFound = individualScores;
+  }
+
+  // Construct or Merge validatorData
+  if (scoresFound) {
+      if (!validatorData) {
+           validatorData = {
+               validated_at: t.validated_at || new Date().toISOString(),
+               result: {
+                   scores: scoresFound,
+                   summary: '',
+                   reasons: [],
+                   recommendations: [],
+                   status: 'completed'
+               }
+           };
+      } else if (validatorData.result && typeof validatorData.result === 'object') {
+          // Merge scores into existing result (copying result first)
+          validatorData.result = { ...validatorData.result, scores: { ...validatorData.result.scores, ...scoresFound } };
+      }
+  }
+
+  // Ensure result object exists if validatorData exists (Safety check for incomplete DB records)
+  if (validatorData && (!validatorData.result || typeof validatorData.result !== 'object')) {
+      validatorData.result = {
+          status: 'unknown',
+          summary: '',
+          reasons: [],
+          recommendations: [],
+          scores: { b2b_tone: 0, brand_alignment: 0, structure: 0, accuracy: 0, enterprise_relevance: 0 }
+      };
+  }
+
+  // FIX: Force population of summary/reasons/recommendations if missing
+  if (validatorData && validatorData.result) {
+      // result is definitely an object here, but we check specifically for missing string properties
+      const res = validatorData.result; // Alias for cleaner access
+      
+      if (!res.summary || res.summary === '') {
+          const scavengedSummary = findValueByKey(t, 'summary') || 
+                                   findValueByKey(t, 'executive_summary') || 
+                                   findValueByKey(t, 'validation_summary') || 
+                                   findValueByKey(t, 'validator_summary');
+          if (scavengedSummary && typeof scavengedSummary === 'string') {
+              res.summary = scavengedSummary;
+          }
+      }
+      
+      if (!res.reasons || res.reasons.length === 0) {
+           const scavengedReasons = findValueByKey(t, 'reasons');
+           if (scavengedReasons) res.reasons = robustParse(scavengedReasons);
+      }
+
+      if (!res.recommendations || res.recommendations.length === 0) {
+           const scavengedRecs = findValueByKey(t, 'recommendations');
+           if (scavengedRecs) res.recommendations = robustParse(scavengedRecs);
+      }
+  }
+
+  // 3. Status Logic
   let status = t.status || TopicStatus.PENDING;
-  // If we have substantial HTML content, assume it's generated, unless explicitly marked otherwise
-  if (
-      generatedContent?.content_html && 
-      generatedContent.content_html.length > 50 && 
-      status !== TopicStatus.CONTENT_GENERATED && 
-      status !== TopicStatus.HUMAN_APPROVED &&
-      status !== TopicStatus.ARTICLE_DRAFT &&
-      status !== TopicStatus.ARTICLE_REJECTED
-  ) {
+  if (generatedContent?.content_html && generatedContent.content_html.length > 50 && status === TopicStatus.PENDING) {
       status = TopicStatus.CONTENT_GENERATED;
   }
+
+  // 4. Bi-Directional Image Sync
+  let finalImgUrl = t.img_url || generatedContent?.featured_image || '';
+  
+  if (!finalImgUrl) {
+      const deepImg = findValueByKey(t, 'featured_image') || findValueByKey(t, 'img_url');
+      if (deepImg && typeof deepImg === 'string') finalImgUrl = cleanString(deepImg);
+  }
+
+  if (generatedContent && !generatedContent.featured_image && finalImgUrl) {
+      generatedContent.featured_image = finalImgUrl;
+  }
+  
+  t.img_url = finalImgUrl;
 
   return {
     ...t,
@@ -237,7 +475,7 @@ const normalizeTopic = (t: any): Topic => {
     aiReason: t.aiReason || t.ai_reason || '',
     status: status,
     createdAt: t.createdAt || new Date().toISOString(),
-    img_url: t.img_url || generatedContent?.featured_image, // Sync top-level img_url
+    img_url: finalImgUrl,
     generatedContent,
     validatorData,
     htmlContent: t.htmlContent || generatedContent?.content_html
@@ -264,7 +502,7 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [contentGeneratingIds, setContentGeneratingIds] = useState<string[]>([]);
 
-  // Initialize Data from Database
+  // Initialize Data
   useEffect(() => {
     const initData = async () => {
       await syncTopics();
@@ -273,29 +511,16 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
         if (config.preferredAngles.length > 0) setPreferredAngles(config.preferredAngles);
         if (config.unpreferredAngles.length > 0) setUnpreferredAngles(config.unpreferredAngles);
       } else {
-        // Defaults if DB is empty
-        setPreferredAngles([
-            'Enterprise scalability', 
-            'Data security and compliance', 
-            'Cost reduction strategies'
-        ]);
-        setUnpreferredAngles([
-            'Cheap/Free alternatives', 
-            'Beginner tutorials', 
-            'Opinion pieces'
-        ]);
+        setPreferredAngles(['Enterprise scalability', 'Data security and compliance', 'Cost reduction strategies']);
+        setUnpreferredAngles(['Cheap/Free alternatives', 'Beginner tutorials', 'Opinion pieces']);
       }
     };
     initData();
   }, []);
 
-  // Effect to Persist State
   useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (theme === 'dark') document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
     localStorage.setItem('topicGen_theme', theme);
   }, [theme]);
 
@@ -307,18 +532,13 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   useEffect(() => { localStorage.setItem('topicGen_article_review_webhook', articleReviewWebhookUrl); }, [articleReviewWebhookUrl]);
   useEffect(() => { localStorage.setItem('topicGen_drafting_webhook', draftingWebhookUrl); }, [draftingWebhookUrl]);
 
-  // Helper to save specific topic to cloud (Supabase)
   const saveTopicToCloud = async (topic: Topic) => {
-    try {
-        await saveSupabaseTopic(topic);
-    } catch (e: any) {
-        console.error("Supabase Save failed:", e.message || JSON.stringify(e));
-    }
+    try { await saveSupabaseTopic(topic); } 
+    catch (e: any) { console.error("Supabase Save failed:", e.message); }
   };
 
   const addTopics = (newTopics: Topic[]) => {
     setTopics((prev) => [...newTopics, ...prev]);
-    // Save new topics to cloud
     newTopics.forEach(t => saveTopicToCloud(t));
   };
 
@@ -336,77 +556,24 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   };
 
   const saveGeneratedContent = (id: string, data: any) => {
-    let topicToSave: Topic | undefined;
-
     setTopics((prev) => {
-      // Find the topic to be updated based on ID
       const existingTopic = prev.find(t => t.id === id);
       if (!existingTopic) return prev;
 
-      let generatedContent: GeneratedContentData | undefined = data.content;
-      let validatorData: ValidatorData | undefined = data.validator_response;
-
-      // Backfill if structure is flat (common from AI webhooks)
-      if (!generatedContent && (data.content_html || data.html_content || data.h1 || data.featured_image || data.image)) {
-          generatedContent = { ...data };
-      }
+      const safeData = robustParse(data);
+      const mergedRaw = { ...existingTopic, ...safeData };
+      const updatedTopic = normalizeTopic(mergedRaw);
+      updatedTopic.status = TopicStatus.CONTENT_GENERATED;
       
-      // Ensure image is captured if present at root data or legacy fields
-      if (generatedContent) {
-          const rawImage = data.image || data.imageUrl || data.featured_image || data.img || data.img_url;
-          if (rawImage && !generatedContent.featured_image) {
-              generatedContent.featured_image = cleanString(rawImage);
-          }
-      }
-
-      if (!validatorData && data.validated_at && data.result) {
-          validatorData = {
-              validated_at: data.validated_at,
-              result: data.result
-          };
-      } else if (!validatorData && (data.scores || data.summary)) {
-          // Reconstruct validator if data came flat
-          validatorData = {
-              validated_at: new Date().toISOString(),
-              result: {
-                  scores: data.scores,
-                  summary: data.summary,
-                  reasons: data.reasons,
-                  recommendations: data.recommendations,
-                  status: 'completed'
-              }
-          };
-      }
-
-      // Create the updated topic object using normalization to ensure structure is correct
-      const updatedTopic = normalizeTopic({ 
-          ...existingTopic, 
-          status: TopicStatus.CONTENT_GENERATED,
-          generatedContent: generatedContent,
-          validatorData: validatorData,
-          htmlContent: existingTopic.htmlContent || generatedContent?.content_html
-      });
+      console.log("Saving generated content:", updatedTopic);
+      saveTopicToCloud(updatedTopic);
       
-      // Explicitly sync img_url for persistence if it was found in content
-      if (generatedContent?.featured_image) {
-          (updatedTopic as any).img_url = generatedContent.featured_image;
-      }
-      
-      topicToSave = updatedTopic;
-      
-      // Update state
       return prev.map(t => t.id === id ? updatedTopic : t);
     });
-
-    // Save to cloud outside the state setter to ensure we have the fully updated object and avoid batching issues
-    if (topicToSave) {
-        console.log("Saving generated content to cloud...", topicToSave);
-        saveTopicToCloud(topicToSave);
-    }
   };
 
   const deleteTopic = (id: string) => {
-    deleteSupabaseTopic(id).catch(e => console.error("Cloud delete failed", e));
+    deleteSupabaseTopic(id).catch(e => console.error(e));
     setTopics((prev) => prev.filter((t) => String(t.id) !== String(id)));
   };
 
@@ -438,41 +605,28 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     }
   };
 
-  const addContentGeneratingId = (id: string) => {
-    setContentGeneratingIds(prev => [...prev, id]);
-  };
-
-  const removeContentGeneratingId = (id: string) => {
-    setContentGeneratingIds(prev => prev.filter(item => item !== id));
-  };
+  const addContentGeneratingId = (id: string) => setContentGeneratingIds(prev => [...prev, id]);
+  const removeContentGeneratingId = (id: string) => setContentGeneratingIds(prev => prev.filter(item => item !== id));
 
   const syncTopics = async () => {
     let externalTopics: Topic[] = [];
-
-    // Prioritize Supabase
     try {
         externalTopics = await fetchSupabaseTopics();
     } catch (e: any) {
         console.error("Supabase Sync Failed:", e);
-        // Fallback to Webhook if Supabase fails (optional legacy support)
         if (syncWebhookUrl) {
-           console.log("Supabase failed, attempting Webhook fallback...");
            try { externalTopics = await fetchExternalData(syncWebhookUrl); } catch(err) {}
         }
     }
     
     setTopics(currentTopics => {
        const currentMap = new Map<string, Topic>(currentTopics.map(t => [String(t.id), t]));
-       
        externalTopics.forEach(ext => {
            const id = ext.id ? String(ext.id) : generateId();
-           const existing = currentMap.get(id);
-           // Merge: External data takes precedence for fields present in it
-           const mergedRaw = existing ? { ...existing, ...ext } : { ...ext, id };
+           const mergedRaw = { ...ext, id };
            const normalized = normalizeTopic(mergedRaw);
            currentMap.set(id, normalized);
        });
-       
        return Array.from(currentMap.values());
     });
   };
@@ -483,7 +637,7 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `topic_gen_backup_${new Date().toISOString().slice(0,10)}.json`;
+      link.download = `topic_gen_backup.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -492,28 +646,19 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   const importData = (jsonData: string) => {
     try {
       const parsed = JSON.parse(jsonData);
-      if (!Array.isArray(parsed)) {
-        alert("Invalid data format: Expected an array of topics.");
-        return;
-      }
+      if (!Array.isArray(parsed)) { alert("Invalid data"); return; }
       const importedTopics: Topic[] = parsed.map(normalizeTopic);
       setTopics(prev => {
          const topicMap = new Map(prev.map(t => [String(t.id), t]));
          importedTopics.forEach(t => topicMap.set(String(t.id), t));
          return Array.from(topicMap.values());
       });
-      // Also save imported to cloud
       importedTopics.forEach(t => saveTopicToCloud(t));
-      alert(`Successfully imported ${importedTopics.length} topics.`);
-    } catch (e: any) {
-      console.error(e);
-      alert("Failed to parse JSON file.");
-    }
+      alert(`Imported ${importedTopics.length} topics.`);
+    } catch (e) { alert("Failed to parse JSON."); }
   };
 
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  };
+  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
   return (
     <AppContext.Provider
@@ -525,32 +670,22 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
         deleteTopic,
         preferredAngles,
         unpreferredAngles,
-        webhookUrl,
-        setWebhookUrl,
-        contentWebhookUrl,
-        setContentWebhookUrl,
-        feedbackWebhookUrl,
-        setFeedbackWebhookUrl,
-        syncWebhookUrl,
-        setSyncWebhookUrl,
-        articleReviewWebhookUrl,
-        setArticleReviewWebhookUrl,
-        draftingWebhookUrl,
-        setDraftingWebhookUrl,
+        webhookUrl, setWebhookUrl,
+        contentWebhookUrl, setContentWebhookUrl,
+        feedbackWebhookUrl, setFeedbackWebhookUrl,
+        syncWebhookUrl, setSyncWebhookUrl,
+        articleReviewWebhookUrl, setArticleReviewWebhookUrl,
+        draftingWebhookUrl, setDraftingWebhookUrl,
         addAngle,
         removeAngle,
         generateId,
-        isGenerating,
-        setIsGenerating,
-        contentGeneratingIds,
-        addContentGeneratingId,
-        removeContentGeneratingId,
+        isGenerating, setIsGenerating,
+        contentGeneratingIds, addContentGeneratingId, removeContentGeneratingId,
         syncTopics,
         exportData,
         importData,
         availableProducts: PRODUCTS,
-        theme,
-        toggleTheme
+        theme, toggleTheme
       }}
     >
       {children}
@@ -560,8 +695,6 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
 
 export const useApp = () => {
   const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useApp must be used within an AppProvider');
-  }
+  if (!context) throw new Error('useApp must be used within an AppProvider');
   return context;
 };

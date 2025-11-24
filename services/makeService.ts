@@ -204,11 +204,16 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
                  }
             }
 
-            // 3. Extract Image
-            const imageRaw = manualExtract(cleanedText, 'image');
+            // 3. Extract Image (Aggressive)
+            let imageRaw = manualExtract(cleanedText, 'image');
+            if (!imageRaw) imageRaw = manualExtract(cleanedText, 'featured_image');
+            if (!imageRaw) imageRaw = manualExtract(cleanedText, 'img_url');
+            
             if (imageRaw) {
                  try {
-                     result.image = parseWithAutoFix(imageRaw);
+                     const parsed = parseWithAutoFix(imageRaw);
+                     if (typeof parsed === 'string') result.image = parsed;
+                     else result.image = imageRaw.replace(/^"|"$/g, '');
                  } catch(e) { 
                      result.image = imageRaw.replace(/^"|"$/g, ''); 
                  }
@@ -273,10 +278,11 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
 
         // 3. Normalize 'image'
         // Explicitly put image at root so AppContext can find it easily
-        if (!result.image && result.content.featured_image) {
-            result.image = result.content.featured_image;
-        } else if (result.image && !result.content.featured_image) {
-             result.content.featured_image = result.image;
+        const extractedImage = result.image || result.featured_image || result.img_url || result.img;
+        
+        if (extractedImage && typeof extractedImage === 'string') {
+             if (!result.image) result.image = extractedImage;
+             if (!result.content.featured_image) result.content.featured_image = extractedImage;
         }
 
         // 4. Scavenge Content Fields (SEO, Meta, etc)
