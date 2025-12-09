@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { AppProvider } from './context/AppContext';
 import Layout from './components/Layout';
@@ -18,7 +19,14 @@ const AppContent: React.FC = () => {
       case 'results':
         return <Results />;
       case 'generated_content':
-        return <GeneratedContent />;
+        // Articles Menu -> Generated Articles
+        return <GeneratedContent forcedType="Article" />;
+      case 'social_generated':
+        // Social Media Menu -> Social Generated
+        return <GeneratedContent forcedType="Socials Media" />;
+      case 'backlink_generated':
+        // Backlinks Menu -> Backlink Generated
+        return <GeneratedContent forcedType="Backlinks Content" />;
       case 'configuration':
         return <Configuration />;
       case 'settings':

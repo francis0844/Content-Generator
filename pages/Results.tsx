@@ -1,8 +1,9 @@
+
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { TopicStatus, Topic } from '../types';
 import { generateArticle, sendFeedback } from '../services/makeService';
-import { Search, Check, X, ThumbsUp, ThumbsDown, Brain, Info, Clock, RotateCcw, CheckCircle2, XCircle, Trash2, FileText, Loader2, Filter } from 'lucide-react';
+import { Search, Check, X, ThumbsUp, ThumbsDown, Brain, Info, Clock, RotateCcw, CheckCircle2, XCircle, Trash2, FileText, Loader2, Filter, Layers } from 'lucide-react';
 import ConfirmationModal from '../components/ConfirmationModal';
 
 type TabType = 'pending' | 'approved' | 'rejected';
@@ -158,6 +159,7 @@ const Results: React.FC = () => {
                    topic_title: topic.title,
                    keyword: topic.keyword,
                    product: topic.product,
+                   contentType: topic.contentType || 'Article',
                    page_id: topic.pageId || '', // Include page ID
                    status: modalState.action === 'approve' ? 'APPROVED' : 'REJECTED',
                    reason: actionReason,
@@ -340,9 +342,14 @@ const Results: React.FC = () => {
                         <span className="text-xs font-medium text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-1 rounded truncate max-w-[150px] inline-block self-start">
                             {topic.keyword}
                         </span>
-                        <span className="text-[10px] text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded truncate max-w-[150px] inline-block self-start">
-                            {topic.product}
-                        </span>
+                        <div className="flex gap-1">
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded truncate max-w-[100px] inline-block self-start">
+                                {topic.product}
+                            </span>
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded truncate max-w-[100px] inline-block self-start border border-gray-200 dark:border-gray-600">
+                                {topic.contentType || 'Article'}
+                            </span>
+                        </div>
                     </div>
                     {getStatusBadge(topic.status)}
                     </div>

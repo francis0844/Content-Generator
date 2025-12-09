@@ -1,4 +1,5 @@
 
+
 export enum TopicStatus {
   PENDING = 'PENDING',
   AI_APPROVED = 'AI_APPROVED',
@@ -9,6 +10,8 @@ export enum TopicStatus {
   ARTICLE_DRAFT = 'ARTICLE_DRAFT',
   ARTICLE_REJECTED = 'ARTICLE_REJECTED',
 }
+
+export type ContentType = 'Article' | 'Socials Media' | 'Backlinks Content';
 
 // --- Validator Data Structures ---
 export interface ValidatorScores {
@@ -24,6 +27,7 @@ export interface ValidatorResult {
   summary: string;
   reasons: string[];
   recommendations: string[];
+  fix_suggestions?: string[]; // Specific for Social Media
   scores: ValidatorScores;
 }
 
@@ -55,6 +59,12 @@ export interface GeneratedContentData {
   meta_description: string;
   content_html: string;
   featured_image?: string;
+  
+  // Social Media / Backlinks specific fields
+  hook?: string;
+  socialPost?: string;
+  hashtags?: string;
+  callToAction?: string;
 }
 
 // --- Main Topic Interface ---
@@ -63,6 +73,7 @@ export interface Topic {
   keyword: string;
   product: string;
   pageId?: string; // ID associated with the product
+  contentType: ContentType; 
   title: string;
   angle: string;
   searchIntent: string;
@@ -78,14 +89,45 @@ export interface Topic {
   
   // Explicit DB field for image
   img_url?: string;
+
+  // Social Media Fields
+  platformType?: string;
+  mainTopic?: string;
+  targetAudience?: string;
+  contentGoal?: string;
+  toneVoice?: string;
+  callToAction?: string;
+
+  // Backlink Fields
+  anchorText?: string;
+  destinationUrl?: string;
+  wordCount?: string;
+  linkPlacement?: string;
+  extraLinks?: string;
+  backlinkPlatform?: string;
 }
 
 export interface GenerationRequest {
   keyword: string;
   product: string;
+  contentType: string;
   url: string;
   preferredAngles: string[];
   unpreferredAngles: string[];
+
+  // Optional fields based on content type
+  platformType?: string;
+  mainTopic?: string;
+  targetAudience?: string;
+  contentGoal?: string;
+  toneVoice?: string;
+  callToAction?: string;
+  anchorText?: string;
+  destinationUrl?: string;
+  wordCount?: string;
+  linkPlacement?: string;
+  extraLinks?: string;
+  backlinkPlatform?: string;
 }
 
 export interface MakeResponse {
@@ -106,4 +148,4 @@ export interface ProductDef {
   id: string;
 }
 
-export type ViewState = 'dashboard' | 'results' | 'configuration' | 'settings' | 'generated_content';
+export type ViewState = 'dashboard' | 'results' | 'configuration' | 'settings' | 'generated_content' | 'social_generated' | 'backlink_generated';

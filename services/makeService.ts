@@ -128,14 +128,42 @@ export const sendToMake = async (webhookUrl: string, data: GenerationRequest): P
       throw new Error(`Invalid response format from Make: ${cleanedText.substring(0, 100)}...`);
     }
 
+    // Handle nested body response (common in Make.com scenarios)
     if (Array.isArray(result) && result.length > 0 && 'body' in result[0]) {
       const bodyContent = result[0].body;
       result = typeof bodyContent === 'string' ? parseWithAutoFix(bodyContent) : bodyContent;
     }
 
+    // --- NORMALIZATION LOGIC ---
+    
+    // 1. If result is a direct Array, wrap it as { topics: [...] }
+    if (Array.isArray(result)) {
+        return { topics: result };
+    }
+
+    // 2. If result is an Object
     if (result && typeof result === 'object') {
-       if (!result.topics && Array.isArray(result.results)) {
-           result.topics = result.results;
+       // Check for standard aliases
+       if (!result.topics) {
+           if (Array.isArray(result.results)) {
+               result.topics = result.results;
+           } else if (Array.isArray(result.data)) {
+               result.topics = result.data;
+           }
+       }
+
+       // 3. Handle Single Object Return (e.g. Social Media single generation)
+       // If 'topics' is still missing, but the object itself looks like a topic data point
+       if (!result.topics) {
+           // Heuristic: Does it have topic-like keys?
+           const keys = Object.keys(result);
+           const hasTopicKeys = keys.some(k => 
+               ['hook', 'post', 'topic', 'title', 'keyword', 'angle', 'hashtags'].includes(k)
+           );
+           
+           if (hasTopicKeys) {
+               return { topics: [result] };
+           }
        }
     }
 
@@ -284,8 +312,26 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
              if (!result.image) result.image = extractedImage;
              if (!result.content.featured_image) result.content.featured_image = extractedImage;
         }
+        
+        // 4. Extract Social Media Fields if present (Root or inside Content)
+        const socialKeys = ['hook', 'post', 'social_post', 'hashtags', 'cta', 'fix_suggestions'];
+        socialKeys.forEach(key => {
+             // Check if it's already in result or content
+             if (result[key] === undefined && result.content[key] === undefined) {
+                  const extracted = manualExtract(cleanedText, key);
+                  if (extracted) {
+                      try {
+                          const parsed = parseWithAutoFix(extracted);
+                          // Place it in content for normalization
+                          result.content[key] = parsed; 
+                      } catch(e) {
+                           result.content[key] = extracted.replace(/^"|"$/g, '');
+                      }
+                  }
+             }
+        });
 
-        // 4. Scavenge Content Fields (SEO, Meta, etc)
+        // 5. Scavenge Content Fields (SEO, Meta, etc)
         const scalarKeys = ['seo_title', 'slug', 'meta_description', 'focus_keyword', 'h1', 'title'];
         scalarKeys.forEach(key => {
             if (result[key] !== undefined && result.content[key] === undefined) result.content[key] = result[key];
@@ -306,7 +352,7 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
             }
         });
 
-        // 5. Populate other validator fields
+        // 6. Populate other validator fields
         if (result.validator_response) {
              if (result.validator_response.scores && !result.validator_response.result) {
                   result.validator_response.result = { 
@@ -316,10 +362,17 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
              }
              if (!result.validator_response.result) result.validator_response.result = { ...result.validator_response };
 
-             const valKeys = ['summary', 'reasons', 'recommendations', 'status'];
+             const valKeys = ['summary', 'reasons', 'recommendations', 'status', 'fix_suggestions'];
              valKeys.forEach(key => {
                   if (!result.validator_response.result[key]) {
-                      if (result[key]) result.validator_response.result[key] = result[key];
+                      // Check root first
+                      if (result[key]) {
+                          result.validator_response.result[key] = result[key];
+                      } 
+                      // Check inside content object (some social payloads do this)
+                      else if (result.content && result.content[key]) {
+                           result.validator_response.result[key] = result.content[key];
+                      }
                       else {
                            const extracted = manualExtract(cleanedText, key);
                            if (extracted) {
@@ -331,7 +384,7 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
              });
         }
 
-        // 6. HTML scavenging fallback
+        // 7. HTML scavenging fallback
         if (!result.content.content_html) {
              const htmlMatch = cleanedText.match(/<(article|html|body)[\s\S]*?<\/\1>/i) || cleanedText.match(/<h1[\s\S]*?<\/article>/i);
              if (htmlMatch) {

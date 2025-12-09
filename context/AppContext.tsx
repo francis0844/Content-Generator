@@ -1,6 +1,7 @@
 
+
 import React, { createContext, useContext, useState, useEffect, ReactNode, PropsWithChildren } from 'react';
-import { Topic, TopicStatus, GeneratedContentData, ValidatorData, ProductDef, ContentSection } from '../types';
+import { Topic, TopicStatus, GeneratedContentData, ValidatorData, ProductDef, ContentSection, ContentType } from '../types';
 import { fetchExternalData } from '../services/makeService';
 import { fetchSupabaseTopics, saveSupabaseTopic, deleteSupabaseTopic, fetchAppConfig, saveAppConfig } from '../services/supabaseService';
 
@@ -254,6 +255,12 @@ const normalizeTopic = (t: any): Topic => {
       populateField('sections', ['sections', 'outline', 'structure', 'content_structure', 'structure.sections'], true);
       populateField('faq', ['faq', 'faqs', 'qna', 'questions', 'faq_schema'], true);
       populateField('related_keywords', ['related_keywords', 'keywords', 'tags'], true);
+      
+      // Social Media / Backlinks Mappings
+      populateField('hook', ['hook', 'heading_hook']);
+      populateField('socialPost', ['socialPost', 'post', 'social_post', 'caption', 'body_text']);
+      populateField('hashtags', ['hashtags', 'tags']);
+      populateField('callToAction', ['callToAction', 'call_to_action', 'cta']);
 
       // --- Aggressive Image Scavenging ---
       // We look for any key that might hold an image URL
@@ -440,11 +447,21 @@ const normalizeTopic = (t: any): Topic => {
            const scavengedRecs = findValueByKey(t, 'recommendations');
            if (scavengedRecs) res.recommendations = robustParse(scavengedRecs);
       }
+      
+      // Social Media Fix Suggestions mapping
+      if (!res.fix_suggestions || res.fix_suggestions.length === 0) {
+           const scavengedFixes = findValueByKey(t, 'fix_suggestions') || findValueByKey(t, 'fixSuggestions');
+           if (scavengedFixes) res.fix_suggestions = robustParse(scavengedFixes);
+      }
   }
 
   // 3. Status Logic
   let status = t.status || TopicStatus.PENDING;
-  if (generatedContent?.content_html && generatedContent.content_html.length > 50 && status === TopicStatus.PENDING) {
+  // If we have content (HTML or Social Post), promote status
+  const hasSocialContent = generatedContent?.socialPost && generatedContent.socialPost.length > 20;
+  const hasArticleContent = generatedContent?.content_html && generatedContent.content_html.length > 50;
+  
+  if ((hasArticleContent || hasSocialContent) && status === TopicStatus.PENDING) {
       status = TopicStatus.CONTENT_GENERATED;
   }
 
@@ -462,12 +479,48 @@ const normalizeTopic = (t: any): Topic => {
   
   t.img_url = finalImgUrl;
 
+  // 5. Content Type Scavenging
+  let contentType: ContentType = t.contentType || t.content_type || t.type || 'Article';
+  // Ensure valid values
+  const validTypes: ContentType[] = ['Article', 'Socials Media', 'Backlinks Content'];
+  if (!validTypes.includes(contentType)) {
+      if (contentType.toLowerCase().includes('social')) contentType = 'Socials Media';
+      else if (contentType.toLowerCase().includes('backlink')) contentType = 'Backlinks Content';
+      else contentType = 'Article';
+  }
+  
+  // If Social Media Content and content_html is empty, construct it from post data for fallback
+  if (contentType === 'Socials Media' && generatedContent && !generatedContent.content_html && generatedContent.socialPost) {
+       generatedContent.content_html = `
+         <div class="social-post">
+            ${generatedContent.hook ? `<h3>${generatedContent.hook}</h3>` : ''}
+            <p>${generatedContent.socialPost.replace(/\n/g, '<br/>')}</p>
+            ${generatedContent.hashtags ? `<p class="text-sm text-blue-600">${generatedContent.hashtags}</p>` : ''}
+         </div>
+       `;
+  }
+
+  // 6. Scavenge Extra Fields for Social/Backlinks
+  const platformType = findValueByKey(t, 'platformType') || findValueByKey(t, 'platform_type');
+  const mainTopic = findValueByKey(t, 'mainTopic') || findValueByKey(t, 'main_topic');
+  const targetAudience = findValueByKey(t, 'targetAudience') || findValueByKey(t, 'target_audience');
+  const contentGoal = findValueByKey(t, 'contentGoal') || findValueByKey(t, 'content_goal');
+  const toneVoice = findValueByKey(t, 'toneVoice') || findValueByKey(t, 'tone_voice') || findValueByKey(t, 'tone');
+  const callToAction = findValueByKey(t, 'callToAction') || findValueByKey(t, 'call_to_action') || findValueByKey(t, 'cta');
+  const anchorText = findValueByKey(t, 'anchorText') || findValueByKey(t, 'anchor_text');
+  const destinationUrl = findValueByKey(t, 'destinationUrl') || findValueByKey(t, 'destination_url') || findValueByKey(t, 'dest_url');
+  const wordCount = findValueByKey(t, 'wordCount') || findValueByKey(t, 'word_count');
+  const linkPlacement = findValueByKey(t, 'linkPlacement') || findValueByKey(t, 'link_placement');
+  const extraLinks = findValueByKey(t, 'extraLinks') || findValueByKey(t, 'extra_links');
+  const backlinkPlatform = findValueByKey(t, 'backlinkPlatform') || findValueByKey(t, 'backlink_platform') || findValueByKey(t, 'content_platform');
+
   return {
     ...t,
     id,
     keyword: t.keyword || 'Unknown Keyword',
     product: t.product || 'Unknown Product',
     pageId: t.pageId || t.page_id || '', 
+    contentType: contentType, 
     title: t.title || 'Untitled Topic',
     angle: t.angle || '',
     searchIntent: t.searchIntent || t.search_intent || '',
@@ -478,7 +531,21 @@ const normalizeTopic = (t: any): Topic => {
     img_url: finalImgUrl,
     generatedContent,
     validatorData,
-    htmlContent: t.htmlContent || generatedContent?.content_html
+    htmlContent: t.htmlContent || generatedContent?.content_html,
+    
+    // New Fields Persistence
+    platformType,
+    mainTopic,
+    targetAudience,
+    contentGoal,
+    toneVoice,
+    callToAction,
+    anchorText,
+    destinationUrl,
+    wordCount,
+    linkPlacement,
+    extraLinks,
+    backlinkPlatform
   };
 };
 
