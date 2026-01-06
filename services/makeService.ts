@@ -1,103 +1,96 @@
 
 import { GenerationRequest, MakeResponse, Topic } from '../types';
 
-// Helper to parse JSON with aggressive cleanup and auto-fixing
+// Robust JSON extraction
 const parseWithAutoFix = (jsonStr: string): any => {
   if (!jsonStr || typeof jsonStr !== 'string') return null;
 
-  // Remove Markdown code blocks if present
-  let cleanStr = jsonStr.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+  let cleanStr = jsonStr.trim();
+  
+  // 1. Broad extraction: Find the first '{' or '[' and the last '}' or ']'
+  const startIdx = Math.min(
+    cleanStr.indexOf('{') === -1 ? Infinity : cleanStr.indexOf('{'),
+    cleanStr.indexOf('[') === -1 ? Infinity : cleanStr.indexOf('[')
+  );
+  const endIdx = Math.max(
+    cleanStr.lastIndexOf('}'),
+    cleanStr.lastIndexOf(']')
+  );
+
+  if (startIdx !== Infinity && endIdx !== -1 && endIdx > startIdx) {
+    cleanStr = cleanStr.substring(startIdx, endIdx + 1);
+  }
+
+  // 2. Remove any remaining markdown artifacts (```json, ```, etc)
+  cleanStr = cleanStr.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   
   try {
     return JSON.parse(cleanStr);
   } catch (e) {
-    // Attempt to fix common AI JSON errors: missing commas between properties/objects
     try {
-          // Fix: "value" "key" -> "value", "key" (excluding colons for key:value pairs)
-          let fixedStr = cleanStr.replace(/(")\s*[\r\n]+\s*(")/g, '$1,$2');
-          // Fix: } { -> }, {
-          fixedStr = fixedStr.replace(/(})\s*[\r\n]+\s*({)/g, '$1,$2');
-          
-          // Fix: Newlines inside JSON strings (common LLM error)
-          // This is a naive fix for unescaped newlines in HTML strings that breaks JSON
-          fixedStr = fixedStr.replace(/([^\\[{\,])\n(?!\s*["}\]])/g, '$1\\n');
-
+          // Attempt to fix common newline escaping issues
+          let fixedStr = cleanStr.replace(/([^\\[{\,])\n(?!\s*["}\]])/g, '$1\\n');
+          fixedStr = fixedStr.replace(/(")\s*[\r\n]+\s*(")/g, '$1,$2');
           return JSON.parse(fixedStr);
     } catch (retryError) {
+          console.error("All JSON parse attempts failed.", cleanStr.substring(0, 100));
           throw e;
     }
   }
 };
 
-// Helper to manually extract JSON tokens (objects or strings) from broken text
-const manualExtract = (text: string, key: string): string | null => {
-    // Allow key to be surrounded by ", ', or \" (escaped quote)
-    // Regex matches: key:, "key":, 'key':, \"key\":
-    const regex = new RegExp(`(?:\\\\?["']?)${key}(?:\\\\?["']?)\\s*:\\s*`);
+// Helper to recursively scavenge for specific data types
+const scavengeFields = (obj: any): { html?: string; seo?: any; validator?: any } => {
+    let result: { html?: string; seo?: any; validator?: any } = {};
+    if (!obj || typeof obj !== 'object') return result;
+
+    // Check current level
+    if (obj.content_html && typeof obj.content_html === 'string' && obj.content_html.includes('<')) result.html = obj.content_html;
+    else if (obj.article && typeof obj.article === 'string' && obj.article.includes('<')) result.html = obj.article;
+    else if (obj.html && typeof obj.html === 'string' && obj.html.includes('<')) result.html = obj.html;
+    else if (obj.body && typeof obj.body === 'string' && obj.body.includes('<')) result.html = obj.body;
     
-    const match = regex.exec(text);
-    if (!match) return null;
-    
-    const start = match.index + match[0].length;
-    const char = text[start];
-    
-    if (char === '{') {
-        // Object - Assume balanced braces
-        let balance = 1;
-        let i = start + 1;
-        while(i < text.length && balance > 0) {
-            if (text[i] === '{') balance++;
-            else if (text[i] === '}') balance--;
-            i++;
+    // Check for SEO object
+    if (obj.seo && typeof obj.seo === 'object') result.seo = obj.seo;
+    else if (obj.meta && typeof obj.meta === 'object') result.seo = obj.meta;
+    else if (obj.seo_metadata && typeof obj.seo_metadata === 'object') result.seo = obj.seo_metadata;
+    else if (obj.metadata && typeof obj.metadata === 'object') result.seo = obj.metadata;
+
+    // Check for Validator object
+    if (obj.validator && typeof obj.validator === 'object') result.validator = obj.validator;
+    else if (obj.validation && typeof obj.validation === 'object') result.validator = obj.validation;
+    else if (obj.analysis && typeof obj.analysis === 'object') result.validator = obj.analysis;
+    else if (obj.audit && typeof obj.audit === 'object') result.validator = obj.audit;
+    else if (obj.ai_analysis && typeof obj.ai_analysis === 'object') result.validator = obj.ai_analysis;
+    else if (obj.quality_analysis && typeof obj.quality_analysis === 'object') result.validator = obj.quality_analysis;
+    else if (obj.evaluation && typeof obj.evaluation === 'object') result.validator = obj.evaluation;
+    else if (obj.review && typeof obj.review === 'object') result.validator = obj.review;
+
+    // Recurse if we haven't found everything
+    if (!result.html || !result.seo || !result.validator) {
+        if (Array.isArray(obj)) {
+            for (const item of obj) {
+                const sub = scavengeFields(item);
+                if (!result.html && sub.html) result.html = sub.html;
+                if (!result.seo && sub.seo) result.seo = sub.seo;
+                if (!result.validator && sub.validator) result.validator = sub.validator;
+            }
+        } else {
+            for (const key in obj) {
+                if (typeof obj[key] === 'object' && obj[key] !== null) {
+                    const sub = scavengeFields(obj[key]);
+                    if (!result.html && sub.html) result.html = sub.html;
+                    if (!result.seo && sub.seo) result.seo = sub.seo;
+                    if (!result.validator && sub.validator) result.validator = sub.validator;
+                }
+            }
         }
-        return text.substring(start, i);
-    } else if (char === '[') {
-        // Array - Assume balanced brackets
-        let balance = 1;
-        let i = start + 1;
-        while(i < text.length && balance > 0) {
-            if (text[i] === '[') balance++;
-            else if (text[i] === ']') balance--;
-            i++;
-        }
-        return text.substring(start, i);
-    } else if (char === '"' || char === "'") {
-        // String - Scan for matching quote, ignoring escaped
-        const quote = char;
-        let i = start + 1;
-        while(i < text.length) {
-            if (text[i] === '\\') { i += 2; continue; }
-            if (text[i] === quote) break;
-            i++;
-        }
-        return text.substring(start, i + 1); 
-    } else {
-        // Simple value
-        let i = start;
-        while(i < text.length && text[i] !== ',' && text[i] !== '}' && text[i] !== ']' && text[i] !== '\n') i++;
-        return text.substring(start, i).trim();
     }
+    return result;
 };
 
-// LAST RESORT: Hunt for individual score keys in the raw text if object parsing failed
-const scavengeScores = (text: string) => {
-    const keys = ['b2b_tone', 'brand_alignment', 'structure', 'accuracy', 'enterprise_relevance'];
-    const scores: any = {};
-    let found = false;
-    keys.forEach(key => {
-        // Matches "key": 9 or 'key': 9 or key: 9, handling optional whitespace and escaped quotes
-        const regex = new RegExp(`(?:\\\\?["']?)${key}(?:\\\\?["']?)\\s*:\\s*(\\d+)`);
-        const match = regex.exec(text);
-        if (match && match[1]) {
-            scores[key] = parseInt(match[1], 10);
-            found = true;
-        }
-    });
-    return found ? scores : null;
-}
-
 export const sendToMake = async (webhookUrl: string, data: GenerationRequest): Promise<MakeResponse> => {
-  if (!webhookUrl) throw new Error('Webhook URL is missing. Please configure it in Settings.');
+  if (!webhookUrl) throw new Error('Webhook URL is missing.');
 
   try {
     const response = await fetch(webhookUrl, {
@@ -106,76 +99,38 @@ export const sendToMake = async (webhookUrl: string, data: GenerationRequest): P
       body: JSON.stringify(data),
     });
 
-    if (!response.ok) {
-      let errorBody = '';
-      try { errorBody = await response.text(); } catch { /* ignore */ }
-      const statusText = response.statusText ? ` ${response.statusText}` : '';
-      const details = errorBody ? ` - ${errorBody.substring(0, 200)}` : '';
-      throw new Error(`Make.com HTTP Error: ${response.status}${statusText}${details}`);
-    }
+    if (!response.ok) throw new Error(`Make.com HTTP Error: ${response.status}`);
 
     const text = await response.text();
-    const cleanedText = text.trim();
+    const result = parseWithAutoFix(text);
 
-    if (!cleanedText) throw new Error('Make.com returned an empty response.');
-    if (cleanedText === 'Accepted') throw new Error('Make.com returned "Accepted" (200 OK) without JSON data.');
-    if (cleanedText.startsWith('<') || cleanedText.toLowerCase().includes('doctype html')) throw new Error('Make.com returned HTML instead of JSON.');
-
-    let result;
-    try {
-      result = parseWithAutoFix(cleanedText);
-    } catch (e) {
-      throw new Error(`Invalid response format from Make: ${cleanedText.substring(0, 100)}...`);
+    let finalResult = result;
+    if (Array.isArray(result) && result.length > 0 && result[0].body) {
+        finalResult = typeof result[0].body === 'string' ? parseWithAutoFix(result[0].body) : result[0].body;
     }
 
-    // Handle nested body response (common in Make.com scenarios)
-    if (Array.isArray(result) && result.length > 0 && 'body' in result[0]) {
-      const bodyContent = result[0].body;
-      result = typeof bodyContent === 'string' ? parseWithAutoFix(bodyContent) : bodyContent;
-    }
-
-    // --- NORMALIZATION LOGIC ---
+    if (Array.isArray(finalResult)) return { topics: finalResult };
     
-    // 1. If result is a direct Array, wrap it as { topics: [...] }
-    if (Array.isArray(result)) {
-        return { topics: result };
+    if (finalResult && typeof finalResult === 'object') {
+       if (finalResult.article || finalResult.post_data?.article || finalResult.content) {
+           return { topics: [finalResult] };
+       }
+       if (finalResult.topics || finalResult.results || finalResult.data) {
+           return { 
+               topics: finalResult.topics || finalResult.results || finalResult.data 
+           };
+       }
+       return { topics: [finalResult] };
     }
 
-    // 2. If result is an Object
-    if (result && typeof result === 'object') {
-       // Check for standard aliases
-       if (!result.topics) {
-           if (Array.isArray(result.results)) {
-               result.topics = result.results;
-           } else if (Array.isArray(result.data)) {
-               result.topics = result.data;
-           }
-       }
-
-       // 3. Handle Single Object Return (e.g. Social Media single generation)
-       // If 'topics' is still missing, but the object itself looks like a topic data point
-       if (!result.topics) {
-           // Heuristic: Does it have topic-like keys?
-           const keys = Object.keys(result);
-           const hasTopicKeys = keys.some(k => 
-               ['hook', 'post', 'topic', 'title', 'keyword', 'angle', 'hashtags'].includes(k)
-           );
-           
-           if (hasTopicKeys) {
-               return { topics: [result] };
-           }
-       }
-    }
-
-    return result as MakeResponse;
-
+    throw new Error('Could not find any topics or content in the response.');
   } catch (error: any) {
     throw error;
   }
 };
 
 export const generateArticle = async (webhookUrl: string, topic: Topic): Promise<any> => {
-    if (!webhookUrl) throw new Error('Content Webhook URL is missing. Please configure it in Settings.');
+    if (!webhookUrl) throw new Error('Content Webhook URL is missing.');
 
     try {
         const response = await fetch(webhookUrl, {
@@ -187,215 +142,47 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
         if (!response.ok) throw new Error(`Make.com HTTP Error: ${response.status}`);
 
         const text = await response.text();
-        const cleanedText = text.trim();
-
-        if (cleanedText.startsWith('<')) {
-            return {
-                content: {
-                    content_html: cleanedText,
-                    title: topic.title
-                }
-            };
-        }
-
-        let result: any = null;
-
-        try {
-            result = parseWithAutoFix(cleanedText);
-        } catch (e) {
-            console.warn("Main JSON Parse failed. Attempting manual extraction.");
-        }
-
-        if (!result) {
-            result = {};
-            
-            // 1. Extract Content
-            const contentRaw = manualExtract(cleanedText, 'content');
-            if (contentRaw) {
-                try {
-                    const parsed = parseWithAutoFix(contentRaw);
-                    result.content = (typeof parsed === 'string') ? parseWithAutoFix(parsed) : parsed;
-                } catch(e) {}
-            }
-            
-            // 2. Extract Validator
-            const validatorRaw = manualExtract(cleanedText, 'validator_response');
-            if (validatorRaw) {
-                 try {
-                     const parsed = parseWithAutoFix(validatorRaw);
-                     result.validator_response = (typeof parsed === 'string') ? parseWithAutoFix(parsed) : parsed;
-                 } catch(e) {
-                     // Keep raw string if parse failed, might scavenge later
-                     if (validatorRaw.startsWith('"') || validatorRaw.startsWith("'")) {
-                         result.validator_response = validatorRaw.replace(/^["']|["']$/g, '');
-                     }
-                 }
-            }
-
-            // 3. Extract Image (Aggressive)
-            let imageRaw = manualExtract(cleanedText, 'image');
-            if (!imageRaw) imageRaw = manualExtract(cleanedText, 'featured_image');
-            if (!imageRaw) imageRaw = manualExtract(cleanedText, 'img_url');
-            
-            if (imageRaw) {
-                 try {
-                     const parsed = parseWithAutoFix(imageRaw);
-                     if (typeof parsed === 'string') result.image = parsed;
-                     else result.image = imageRaw.replace(/^"|"$/g, '');
-                 } catch(e) { 
-                     result.image = imageRaw.replace(/^"|"$/g, ''); 
-                 }
-            }
-        }
-
-        if (Object.keys(result).length === 0) {
-             return { content: { content_html: cleanedText, title: topic.title } };
-        }
-
-        // --- Post-Processing ---
-
-        // 1. Handle Content
-        if (result.content && typeof result.content === 'string') {
-            try { result.content = parseWithAutoFix(result.content); } catch (e) {}
-        }
-        if (result.content && typeof result.content === 'string') {
-             result.content = { content_html: result.content };
-        } else if (!result.content) {
-             result.content = {};
-        }
-
-        // 2. Handle Validator Response (Deep Scavenging)
-        let validatorString = '';
         
-        if (result.validator_response && typeof result.validator_response === 'string') {
-            validatorString = result.validator_response; 
-            try { 
-                const parsed = parseWithAutoFix(result.validator_response); 
-                if (parsed && typeof parsed === 'object') {
-                    result.validator_response = parsed;
-                } else {
-                    result.validator_response = null; // failed to parse to object
-                }
-            } catch (e) {
-                result.validator_response = null; 
-            }
+        // If it's pure HTML, wrap it
+        if (text.trim().startsWith('<')) {
+            return { content: { content_html: text.trim(), title: topic.title } };
         }
 
-        // If we still don't have a valid object, scavenge using the raw text OR the validatorString
-        const sourceText = validatorString || cleanedText;
+        let result = parseWithAutoFix(text);
+
+        // Normalize Make.com specific wrappers
+        if (Array.isArray(result) && result.length > 0) {
+             // Sometimes Make returns an array of bundles
+             result = result[0].body ? (typeof result[0].body === 'string' ? parseWithAutoFix(result[0].body) : result[0].body) : result[0];
+        } else if (result.body) {
+             result = typeof result.body === 'string' ? parseWithAutoFix(result.body) : result.body;
+        }
+
+        // Deep Scavenge for critical data
+        const scavenged = scavengeFields(result);
         
-        if (!result.validator_response || typeof result.validator_response !== 'object') {
-            // Try to find 'scores' directly (object extraction)
-            let scoresObj = null;
-            const scoresRaw = manualExtract(sourceText, 'scores');
-            if (scoresRaw) {
-                try { scoresObj = parseWithAutoFix(scoresRaw); } catch(e) {}
-            } 
+        // Final Robust Field Mapping
+        const source = result.post_data || result.data || result;
+        const seoSource = scavenged.seo || source.seo || source.meta || {};
+        const validatorSource = scavenged.validator || source.validator || source.validation || source.analysis || source.audit;
+
+        const merged = {
+            ...result,
+            generated_content_raw: result,
             
-            // Fallback: Scavenge individual score keys (regex hunt)
-            if (!scoresObj) {
-                 scoresObj = scavengeScores(sourceText);
-            }
+            // Prioritize scavenged HTML
+            content_html: scavenged.html || source.article || source.content_html || source.html_content || source.body || source.html,
+            
+            // Map SEO fields to top level
+            seo_title: seoSource.title || seoSource.seo_title,
+            meta_description: seoSource.description || seoSource.meta_description,
+            slug: seoSource.slug,
+            
+            // Map Validator
+            validatorData: validatorSource
+        };
 
-            if (scoresObj) {
-                if (!result.validator_response) result.validator_response = {};
-                if (!result.validator_response.result) result.validator_response.result = {};
-                result.validator_response.result.scores = scoresObj;
-            }
-        }
-
-        // 3. Normalize 'image'
-        // Explicitly put image at root so AppContext can find it easily
-        const extractedImage = result.image || result.featured_image || result.img_url || result.img;
-        
-        if (extractedImage && typeof extractedImage === 'string') {
-             if (!result.image) result.image = extractedImage;
-             if (!result.content.featured_image) result.content.featured_image = extractedImage;
-        }
-        
-        // 4. Extract Social Media Fields if present (Root or inside Content)
-        const socialKeys = ['hook', 'post', 'social_post', 'hashtags', 'cta', 'fix_suggestions'];
-        socialKeys.forEach(key => {
-             // Check if it's already in result or content
-             if (result[key] === undefined && result.content[key] === undefined) {
-                  const extracted = manualExtract(cleanedText, key);
-                  if (extracted) {
-                      try {
-                          const parsed = parseWithAutoFix(extracted);
-                          // Place it in content for normalization
-                          result.content[key] = parsed; 
-                      } catch(e) {
-                           result.content[key] = extracted.replace(/^"|"$/g, '');
-                      }
-                  }
-             }
-        });
-
-        // 5. Scavenge Content Fields (SEO, Meta, etc)
-        const scalarKeys = ['seo_title', 'slug', 'meta_description', 'focus_keyword', 'h1', 'title'];
-        scalarKeys.forEach(key => {
-            if (result[key] !== undefined && result.content[key] === undefined) result.content[key] = result[key];
-            if (!result.content[key]) {
-                 const extracted = manualExtract(cleanedText, key);
-                 if (extracted) {
-                     try { result.content[key] = parseWithAutoFix(extracted); } catch (e) { result.content[key] = extracted.replace(/^"|"$/g, ''); }
-                 }
-            }
-        });
-
-        const complexKeys = ['related_keywords', 'sections', 'faq'];
-        complexKeys.forEach(key => {
-            if (result[key] !== undefined && result.content[key] === undefined) result.content[key] = result[key];
-            if (!result.content[key]) {
-                 const extracted = manualExtract(cleanedText, key);
-                 if (extracted) { try { result.content[key] = parseWithAutoFix(extracted); } catch (e) {} }
-            }
-        });
-
-        // 6. Populate other validator fields
-        if (result.validator_response) {
-             if (result.validator_response.scores && !result.validator_response.result) {
-                  result.validator_response.result = { 
-                      scores: result.validator_response.scores,
-                      ...result.validator_response
-                  };
-             }
-             if (!result.validator_response.result) result.validator_response.result = { ...result.validator_response };
-
-             const valKeys = ['summary', 'reasons', 'recommendations', 'status', 'fix_suggestions'];
-             valKeys.forEach(key => {
-                  if (!result.validator_response.result[key]) {
-                      // Check root first
-                      if (result[key]) {
-                          result.validator_response.result[key] = result[key];
-                      } 
-                      // Check inside content object (some social payloads do this)
-                      else if (result.content && result.content[key]) {
-                           result.validator_response.result[key] = result.content[key];
-                      }
-                      else {
-                           const extracted = manualExtract(cleanedText, key);
-                           if (extracted) {
-                               try { result.validator_response.result[key] = parseWithAutoFix(extracted); } 
-                               catch(e) { result.validator_response.result[key] = extracted.replace(/^"|"$/g, ''); }
-                           }
-                      }
-                  }
-             });
-        }
-
-        // 7. HTML scavenging fallback
-        if (!result.content.content_html) {
-             const htmlMatch = cleanedText.match(/<(article|html|body)[\s\S]*?<\/\1>/i) || cleanedText.match(/<h1[\s\S]*?<\/article>/i);
-             if (htmlMatch) {
-                 result.content.content_html = htmlMatch[0];
-             } else if (cleanedText.includes('<h1>') && cleanedText.includes('<p>')) {
-                 result.content.content_html = cleanedText;
-             }
-        }
-
-        return result;
-
+        return merged;
     } catch (error: any) {
         throw error;
     }
@@ -403,74 +190,41 @@ export const generateArticle = async (webhookUrl: string, topic: Topic): Promise
 
 export const sendFeedback = async (webhookUrl: string, data: any): Promise<void> => {
     if (!webhookUrl) return;
-    try {
-        await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-    } catch (error) {
-        console.error('Failed to send feedback:', error);
-    }
+    try { await fetch(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); } 
+    catch (error) { console.error('Feedback failed:', error); }
 };
 
 export const sendArticleReview = async (webhookUrl: string, data: any): Promise<void> => {
     if (!webhookUrl) throw new Error('Review Webhook URL is missing.');
-    
-    const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-         let errorBody = '';
-         try { errorBody = await response.text(); } catch { /* ignore */ }
-         const details = errorBody ? ` - ${errorBody}` : '';
-         throw new Error(`Failed to send review (${response.status}): ${response.statusText}${details}`);
-    }
+    const response = await fetch(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    if (!response.ok) throw new Error(`Review failed: ${response.status}`);
 };
 
 export const sendArticleDraft = async (webhookUrl: string, data: any): Promise<void> => {
-    if (!webhookUrl) return; // Silent fail if not configured
-    
-    try {
-        const response = await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
+    if (!webhookUrl) return; 
+    try { await fetch(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); } 
+    catch (error) { console.error('Draft failed:', error); }
+};
 
-        if (!response.ok) {
-            console.warn(`Draft webhook failed: ${response.status}`);
-        }
-    } catch (error) {
-        console.error('Failed to send draft webhook:', error);
-    }
+export const sendSocialMediaReview = async (webhookUrl: string, data: any): Promise<void> => {
+    if (!webhookUrl) throw new Error('Social Review Webhook URL is missing.');
+    const response = await fetch(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    if (!response.ok) throw new Error(`Social review failed: ${response.status}`);
 };
 
 export const fetchExternalData = async (webhookUrl: string): Promise<Topic[]> => {
   if (!webhookUrl) throw new Error('Sync Webhook URL is missing.');
-  
   const response = await fetch(webhookUrl);
-  if (!response.ok) throw new Error(`Failed to fetch data: ${response.status}`);
-  
+  if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
   const text = await response.text();
   const data = parseWithAutoFix(text);
+  let topics: any[] = [];
+  if (Array.isArray(data)) topics = data;
+  else if (data?.topics) topics = data.topics;
+  else if (data?.data) topics = data.data;
   
-  let topicsArray: any[] = [];
-  
-  if (Array.isArray(data)) {
-      topicsArray = data;
-  } else if (data && typeof data === 'object') {
-      if (Array.isArray(data.topics)) topicsArray = data.topics;
-      else if (Array.isArray(data.data)) topicsArray = data.data;
-      else if (Array.isArray(data.results)) topicsArray = data.results;
-  }
-  
-  return topicsArray.map((t: any) => ({
+  return topics.map((t: any) => ({
       ...t,
-      // Ensure critical fields exist, but don't override ID if it exists in DB
       keyword: t.keyword || 'Synced Topic',
       product: t.product || 'Synced Product',
       title: t.title || 'Untitled',

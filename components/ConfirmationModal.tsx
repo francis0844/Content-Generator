@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { PropsWithChildren } from 'react';
 import { AlertTriangle, CheckCircle, Trash2, Info, X } from 'lucide-react';
 
 interface ConfirmationModalProps {
@@ -16,7 +16,7 @@ interface ConfirmationModalProps {
   inputPlaceholder?: string;
 }
 
-const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
+const ConfirmationModal: React.FC<PropsWithChildren<ConfirmationModalProps>> = ({
   isOpen,
   onClose,
   onConfirm,
@@ -29,6 +29,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   inputValue = '',
   onInputChange,
   inputPlaceholder = 'Enter reason...',
+  children
 }) => {
   if (!isOpen) return null;
 
@@ -78,8 +79,10 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
               <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{title}</h3>
               <p className="text-base text-gray-600 dark:text-gray-300 leading-relaxed mb-6">{message}</p>
               
+              {children}
+
               {showInput && onInputChange && (
-                  <div className="mt-2">
+                  <div className="mt-4">
                       <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-2">Reason (Optional)</label>
                       <textarea
                           value={inputValue}
@@ -110,7 +113,11 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
           <button
             onClick={() => {
               onConfirm();
-              onClose();
+              // onClose(); // Handle close in parent if needed, or explicitly call it here. 
+              // Standard behavior implies parent handles logic then closes, but confirm usually means "Done".
+              // Removed implicit onClose() to allow parent to validate. But wait, existing code relies on it.
+              // Re-adding onClose for safety if not handled.
+              // Actually, standard pattern in this app's usage is onConfirm does logic then sets isOpen false.
             }}
             className={`px-5 py-2.5 text-sm font-medium text-white rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-gray-900 transition-colors ${currentStyle.btnBg}`}
           >

@@ -1,11 +1,8 @@
-
-
 import React, { createContext, useContext, useState, useEffect, ReactNode, PropsWithChildren } from 'react';
 import { Topic, TopicStatus, GeneratedContentData, ValidatorData, ProductDef, ContentSection, ContentType } from '../types';
 import { fetchExternalData } from '../services/makeService';
 import { fetchSupabaseTopics, saveSupabaseTopic, deleteSupabaseTopic, fetchAppConfig, saveAppConfig } from '../services/supabaseService';
 
-// Defined Products List
 export const PRODUCTS: ProductDef[] = [
   { name: 'MaxDup', id: 'UBiUitsu7XBKkIYSZvc7' },
   { name: 'MaxMover', id: '9a3FIX1pdkR8f0H79lPX' },
@@ -35,6 +32,8 @@ interface AppContextType {
   setArticleReviewWebhookUrl: (url: string) => void;
   draftingWebhookUrl: string;
   setDraftingWebhookUrl: (url: string) => void;
+  socialReviewWebhookUrl: string;
+  setSocialReviewWebhookUrl: (url: string) => void;
   addAngle: (type: 'preferred' | 'unpreferred', angle: string) => void;
   removeAngle: (type: 'preferred' | 'unpreferred', angle: string) => void;
   generateId: () => string;
@@ -53,523 +52,261 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Robust ID generator
 const generateId = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
-// Helper to safely parse JSON if it's a string, cleaning up common AI artifacts
 const robustParse = (value: any) => {
     if (typeof value !== 'string') return value;
-    
-    // Attempt basic parse
-    try {
-        return JSON.parse(value);
-    } catch (e) {
-        // Cleanup Markdown code blocks
-        let clean = value.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-        // Cleanup escaped newlines/quotes loosely
-        clean = clean.trim();
+    try { return JSON.parse(value); } catch (e) {
+        let clean = value.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
         try { return JSON.parse(clean); } catch (e2) { return value; }
     }
 };
 
-// Helper to clean strings (remove quotes, markdown images)
 const cleanString = (val: any): string => {
     if (typeof val !== 'string') return '';
-    
-    let clean = val.trim();
-    
-    // 1. Remove surrounding quotes
-    clean = clean.replace(/^["']|["']$/g, '').trim();
-    
-    // 2. Handle Markdown image syntax: ![Alt](url) or [Alt](url)
+    let clean = val.trim().replace(/^["']|["']$/g, '').trim();
+    if (clean.startsWith('(') && clean.endsWith(')')) clean = clean.substring(1, clean.length - 1);
     const mdMatch = clean.match(/!?\[.*?\]\((https?:\/\/[^)]+)\)/);
     if (mdMatch && mdMatch[1]) return mdMatch[1];
-
-    // 3. Handle parenthesized or bracketed url: (http://...) or [http://...]
-    const wrapperMatch = clean.match(/^[\(\[]\s*(https?:\/\/[^)\]]+)\s*[\)\]]$/);
-    if (wrapperMatch && wrapperMatch[1]) return wrapperMatch[1];
-    
-    // 4. Fallback: If the string is not a valid URL but contains one, extract it.
-    // E.g. "Here is the image: https://..."
-    if (!clean.match(/^(https?:\/\/|\/|data:)/i)) {
-        const urlMatch = clean.match(/(https?:\/\/[^\s"'\)]+)/);
-        if (urlMatch && urlMatch[1]) return urlMatch[1];
-    }
-
-    // 5. Cleanup trailing punctuation that might have been captured (.,;)
-    clean = clean.replace(/[\.,;]$/, '');
-
     return clean;
 };
 
-// --- RECURSIVE FINDER ---
-const findValueByKey = (obj: any, targetKey: string, depth = 0): any => {
-    if (!obj || typeof obj !== 'object' || depth > 8) return undefined;
-    
-    // 0. Dot Notation Handling (e.g. "seo.title")
-    if (targetKey.includes('.')) {
-        const parts = targetKey.split('.');
-        const rootKey = parts[0];
-        const restKey = parts.slice(1).join('.');
-        
-        const rootObj = findValueByKey(obj, rootKey, depth);
-        if (rootObj && typeof rootObj === 'object') {
-            return findValueByKey(rootObj, restKey, 0);
-        }
-        return undefined;
+const parseScore = (val: any): number => {
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') {
+        // Matches "8", "8.5", "8/10", "Score: 8"
+        const match = val.match(/(\d+(\.\d+)?)/);
+        if (match) return parseFloat(match[1]);
     }
-    
-    // 1. Direct match (Case Insensitive Check)
-    const keys = Object.keys(obj);
-    const lowerTarget = targetKey.toLowerCase();
-    for (const k of keys) {
-        if (k.toLowerCase() === lowerTarget) {
-            if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
-        }
-    }
-    
-    // 2. Snake case match
-    const snake = targetKey.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
-    if (obj[snake] !== undefined && obj[snake] !== null && obj[snake] !== '') return obj[snake];
-    
-    // 3. Camel case match
-    const camel = targetKey.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-    if (obj[camel] !== undefined && obj[camel] !== null && obj[camel] !== '') return obj[camel];
+    return 0;
+};
 
-    // 4. Recursive search in children
+// Pure Deep Search - Recursive with Array support
+const findValueByKey = (obj: any, targetKey: string, depth = 0): any => {
+    if (!obj || typeof obj !== 'object' || depth > 12) return undefined;
+    
+    const normalizedTarget = targetKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Check direct properties first
     for (const key in obj) {
-        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (normalizedKey === normalizedTarget) {
             const val = obj[key];
-            
-            if (typeof val === 'object' && val !== null) {
-                // Handle Arrays by searching inside elements
-                if (Array.isArray(val)) {
-                    // Search first few elements to avoid massive loops
-                    for (let i = 0; i < Math.min(val.length, 3); i++) {
-                        const item = val[i];
-                        if (typeof item === 'object') {
-                            const found = findValueByKey(item, targetKey, depth + 1);
-                            if (found !== undefined) return found;
-                        }
-                    }
-                } else {
-                    // Handle Objects
-                    const found = findValueByKey(val, targetKey, depth + 1);
-                    if (found !== undefined) return found;
-                }
+            if (val !== undefined && val !== null && val !== '') return val;
+        }
+    }
+
+    // Recursive deep search (including arrays)
+    if (Array.isArray(obj)) {
+        for (const item of obj) {
+            const found = findValueByKey(item, targetKey, depth + 1);
+            if (found !== undefined) return found;
+        }
+    } else {
+        for (const key in obj) {
+            if (typeof obj[key] === 'object' && obj[key] !== null) {
+                const found = findValueByKey(obj[key], targetKey, depth + 1);
+                if (found !== undefined) return found;
             }
         }
     }
     return undefined;
 };
 
-// Merges properties from nested objects (like 'seo', 'structure') into the main object
-const scavengeObjects = (source: any, target: any, keys: string[]) => {
-    keys.forEach(k => {
-        const val = findValueByKey(source, k);
-        if (val && typeof val === 'object' && !Array.isArray(val)) {
-            // We use a safe merge to not overwrite existing non-empty keys
-            Object.keys(val).forEach(subKey => {
-                if (!target[subKey]) target[subKey] = val[subKey];
-            });
-        }
-    });
+// Helper to find first string match among candidates
+const getString = (obj: any, ...candidates: string[]): string => {
+    for (const key of candidates) {
+        const val = findValueByKey(obj, key);
+        if (val && typeof val === 'string' && val.trim().length > 0) return val;
+        if (val !== undefined && val !== null && typeof val === 'number') return String(val);
+    }
+    return '';
 };
 
-// Normalize function to ensure data structure consistency
+// Helper to find first object match (or string parsable to object)
+const getObject = (obj: any, ...candidates: string[]): any => {
+    for (const key of candidates) {
+        const val = findValueByKey(obj, key);
+        if (val && typeof val === 'object') return val;
+        if (val && typeof val === 'string') {
+             try { 
+                 const parsed = robustParse(val);
+                 if (typeof parsed === 'object') return parsed;
+             } catch(e) {}
+        }
+    }
+    return undefined;
+};
+
+// Helper to extract image URL from string or object
+const extractImageUrl = (val: any): string => {
+    if (!val) return '';
+    let url = '';
+    if (typeof val === 'string') url = cleanString(val);
+    else if (typeof val === 'object') {
+        url = cleanString(val.url || val.src || val.link || val.href || val.image || val.img || val.secure_url || val.uri || '');
+    }
+    
+    // Strict Validation: Must look like a URL to be accepted as an image
+    if (url && (url.startsWith('http') || url.startsWith('data:image'))) {
+        return url;
+    }
+    return '';
+};
+
 const normalizeTopic = (t: any): Topic => {
   const id = t.id ? String(t.id) : generateId();
   
-  // PRE-EXPANSION: Parse stringified fields
-  const expandKeys = ['content', 'generatedContent', 'seo', 'seo_data', 'metadata', 'structure', 'outline', 'validator_response', 'scores', 'Scores', 'result'];
-  expandKeys.forEach(k => {
-     // Try finding the key recursively first, just in case it's nested
-     const found = findValueByKey(t, k);
-     if (found && typeof found === 'string') {
-         // Determine where to set it back... complicated if deep. 
-         // For now, if it's at root `t[k]`, parse it.
-         if (t[k]) t[k] = robustParse(t[k]);
-     }
-  });
+  // Explicit check for social media hook as title fallback
+  const scavengedTitle = getString(t, 'title', 'topic', 'hook', 'headline', 'header', 'social_hook');
 
-  // 1. Scavenge Generated Content
-  let generatedContent: GeneratedContentData | undefined = t.generatedContent || (typeof t.content === 'object' ? t.content : undefined);
+  // Existing generated content
+  const ex = t.generatedContent || {};
+
+  // Resolve logic: Prioritize fresh data found in t (top level or nested)
+  const resolve = (key: string, ...aliases: string[]) => {
+     // 1. Try finding flat string match
+     const fresh = getString(t, key, ...aliases);
+     if (fresh) return fresh;
+
+     // 2. Try looking into common containers if specific keys are requested (SEO)
+     if (['seo_title', 'meta_description', 'slug'].includes(key)) {
+         const seoObj = getObject(t, 'seo', 'meta', 'metadata', 'seo_metadata');
+         if (seoObj) {
+             if (key === 'seo_title') return getString(seoObj, 'title', 'seo_title', 'meta_title');
+             if (key === 'meta_description') return getString(seoObj, 'description', 'meta_description', 'desc');
+             if (key === 'slug') return getString(seoObj, 'slug', 'permalink', 'url');
+         }
+     }
+
+     // Fallback to existing if string is valid
+     if (ex[key] && typeof ex[key] === 'string' && ex[key].length > 0) return ex[key];
+     
+     return '';
+  };
   
-  if (!generatedContent) {
-      // Fallback: Create basic object if content is found elsewhere
-      const hasContent = findValueByKey(t, 'content_html') || findValueByKey(t, 'html_content');
-      if (hasContent) {
-          generatedContent = {
-              title: t.title || 'Untitled',
-              h1: t.h1 || t.title || '',
-              slug: t.slug || '',
-              sections: [],
-              faq: [],
-              focus_keyword: t.focus_keyword || t.keyword || '',
-              related_keywords: [],
-              seo_title: '',
-              meta_description: '',
-              content_html: hasContent,
-              featured_image: ''
-          };
+  // Scavenge Image Logic - Iterative Search
+  let foundImage = '';
+  const imageKeys = [
+      'image_data', 'featured_image', 'featured_image', 'img_url', 'image', 'thumbnail', 'post_image', 
+      'pic', 'feature_image', 'image_url', 'picture', 'asset', 'media', 'generated_image', 'file'
+  ];
+  
+  for (const key of imageKeys) {
+      const val = findValueByKey(t, key); // Search deeply for this specific key
+      const extracted = extractImageUrl(val);
+      if (extracted) {
+          foundImage = extracted;
+          break; // Stop once we find a valid URL
       }
   }
+  
+  // Fallbacks
+  if (!foundImage && ex.featured_image) foundImage = ex.featured_image;
+  if (!foundImage && t.img_url && extractImageUrl(t.img_url)) foundImage = t.img_url;
 
-  if (generatedContent) {
-      // Flatten SEO/Structure objects into generatedContent for easier access
-      scavengeObjects(t, generatedContent, ['seo', 'seo_data', 'metadata', 'structure', 'outline', 'content']);
+  // Scavenge and initialize generatedContent using robust aliases
+  let generatedContent: GeneratedContentData = {
+    title: resolve('title', 'title', 'headline') || scavengedTitle || t.keyword || 'Untitled Topic',
+    h1: resolve('h1', 'h1', 'headline'),
+    slug: resolve('slug', 'slug', 'url_slug', 'permalink', 'path', 'uri', 'permlink'),
+    sections: Array.isArray(ex.sections) ? ex.sections : (Array.isArray(findValueByKey(t, 'sections')) ? findValueByKey(t, 'sections') : []),
+    faq: Array.isArray(ex.faq) ? ex.faq : (Array.isArray(findValueByKey(t, 'faq')) ? findValueByKey(t, 'faq') : []),
+    focus_keyword: resolve('focus_keyword', 'focus_keyword', 'keyword', 'topic', 'primary_keyword'),
+    related_keywords: Array.isArray(ex.related_keywords) ? ex.related_keywords : (Array.isArray(findValueByKey(t, 'related_keywords')) ? findValueByKey(t, 'related_keywords') : []),
+    seo_title: resolve('seo_title', 'seo_title', 'meta_title', 'title_tag', 'seo_meta_title', 'seotitle', 'metatitle'),
+    meta_description: resolve('meta_description', 'meta_description', 'meta_desc', 'description', 'seo_description', 'search_description', 'meta_d', 'metadescription'),
+    content_html: resolve('content_html', 'content_html', 'html_content', 'article', 'body', 'post_body', 'content', 'html', 'full_content', 'article_body', 'text'),
+    featured_image: foundImage,
+    socialPost: resolve('socialPost', 'socialPost', 'social_post', 'post', 'content', 'caption', 'social_caption', 'copy', 'message', 'body', 'text', 'post_content', 'social_copy', 'social_media_post', 'description'),
+    hook: resolve('hook', 'hook', 'social_hook', 'headline', 'opening'),
+    hashtags: resolve('hashtags', 'hashtags', 'tags'),
+    callToAction: resolve('callToAction', 'callToAction', 'call_to_action', 'cta', 'action'),
+  };
 
-      // Populate Helper
-      const populateField = (targetKey: keyof GeneratedContentData, searchKeys: string[], isArray = false) => {
-          // Check if already exists and is valid
-          if ((generatedContent as any)[targetKey]) {
-              const val = (generatedContent as any)[targetKey];
-              if (isArray && Array.isArray(val) && val.length > 0) return;
-              if (!isArray && val && val !== '-') return;
-          }
+  // Cross-pollinate content_html and socialPost if one is missing
+  if (!generatedContent.content_html && generatedContent.socialPost) {
+      generatedContent.content_html = generatedContent.socialPost;
+  }
+  if (!generatedContent.socialPost && generatedContent.content_html) {
+      generatedContent.socialPost = generatedContent.content_html;
+  }
 
-          for (const key of searchKeys) {
-             const val = findValueByKey(t, key);
-             if (val !== undefined && val !== null && val !== '') {
-                  const parsed = isArray ? robustParse(val) : val;
-                  if (isArray) {
-                      if (Array.isArray(parsed)) (generatedContent as any)[targetKey] = parsed;
-                  } else {
-                      (generatedContent as any)[targetKey] = parsed;
-                  }
-                  return;
-             }
-          }
-      };
-
-      // Mappings
-      populateField('seo_title', ['seo_title', 'meta_title', 'title_tag', 'seo.title', 'seo.seo_title', 'metadata.title']);
-      populateField('meta_description', ['meta_description', 'meta_desc', 'description', 'seo.description', 'seo_description', 'seo.meta_description', 'summary', 'short_description']);
-      populateField('focus_keyword', ['focus_keyword', 'keyword', 'seo.keyword']);
-      populateField('slug', ['slug', 'url_slug', 'seo.slug']);
-      populateField('h1', ['h1', 'headline']);
-      populateField('content_html', ['content_html', 'html_content', 'article_body', 'body_html']);
+  // Scavenge validatorData specifically using getObject
+  let validatorResult = getObject(t, 'validatorData', 'validator', 'validation', 'analysis', 'result', 'quality_analysis', 'content_score', 'validation_report', 'audit', 'validator_result', 'ai_check', 'quality_report', 'evaluation', 'review', 'ai_analysis');
+  let validatorData: ValidatorData | undefined = undefined;
+  
+  if (validatorResult) {
+      // Sometimes the result is nested in data or result key
+      const actual = validatorResult.result || validatorResult.data || validatorResult;
       
-      populateField('sections', ['sections', 'outline', 'structure', 'content_structure', 'structure.sections'], true);
-      populateField('faq', ['faq', 'faqs', 'qna', 'questions', 'faq_schema'], true);
-      populateField('related_keywords', ['related_keywords', 'keywords', 'tags'], true);
-      
-      // Social Media / Backlinks Mappings
-      populateField('hook', ['hook', 'heading_hook']);
-      populateField('socialPost', ['socialPost', 'post', 'social_post', 'caption', 'body_text']);
-      populateField('hashtags', ['hashtags', 'tags']);
-      populateField('callToAction', ['callToAction', 'call_to_action', 'cta']);
-
-      // --- Aggressive Image Scavenging ---
-      // We look for any key that might hold an image URL
-      const foundImg = findValueByKey(t, 'featured_image') || 
-                       findValueByKey(t, 'img_url') || 
-                       findValueByKey(t, 'image') || 
-                       findValueByKey(t, 'imageUrl') || 
-                       findValueByKey(t, 'src');
-      
-      if (foundImg && typeof foundImg === 'string' && foundImg.length > 5) {
-          const cleaned = cleanString(foundImg);
-          // Basic validation to ensure it looks like a url or path
-          if (cleaned.match(/^(https?:\/\/|\/|data:)/i)) {
-             generatedContent.featured_image = cleaned;
-          }
-      }
-
-      // Fallback: Extract from content_html if no other image found
-      if (!generatedContent.featured_image && generatedContent.content_html) {
-          const imgMatch = generatedContent.content_html.match(/<img[^>]+src=["']([^"']+)["']/i);
-          if (imgMatch && imgMatch[1]) {
-              const cleaned = cleanString(imgMatch[1]);
-              if (cleaned.match(/^(https?:\/\/|\/|data:)/i)) {
-                  generatedContent.featured_image = cleaned;
+      validatorData = {
+          validated_at: getString(t, 'validated_at') || new Date().toISOString(),
+          result: {
+              status: getString(actual, 'status') || 'completed',
+              summary: getString(actual, 'summary', 'why_this_works', 'justification', 'analysis_summary', 'overview', 'critique', 'review'),
+              reasons: Array.isArray(findValueByKey(actual, 'reasons')) ? findValueByKey(actual, 'reasons') : [],
+              recommendations: Array.isArray(findValueByKey(actual, 'recommendations')) ? findValueByKey(actual, 'recommendations') : [],
+              fix_suggestions: Array.isArray(findValueByKey(actual, 'fix_suggestions')) ? findValueByKey(actual, 'fix_suggestions') : [],
+              scores: {
+                  b2b_tone: parseScore(findValueByKey(actual, 'b2b_tone') || findValueByKey(actual, 'tone_score') || findValueByKey(actual, 'tone') || findValueByKey(actual, 'professionalism')),
+                  brand_alignment: parseScore(findValueByKey(actual, 'brand_alignment') || findValueByKey(actual, 'brand_score') || findValueByKey(actual, 'brand') || findValueByKey(actual, 'consistency') || findValueByKey(actual, 'alignment')),
+                  structure: parseScore(findValueByKey(actual, 'structure') || findValueByKey(actual, 'structure_score') || findValueByKey(actual, 'readability') || findValueByKey(actual, 'formatting')),
+                  accuracy: parseScore(findValueByKey(actual, 'accuracy') || findValueByKey(actual, 'accuracy_score') || findValueByKey(actual, 'fact_check') || findValueByKey(actual, 'validity')),
+                  enterprise_relevance: parseScore(findValueByKey(actual, 'enterprise_relevance') || findValueByKey(actual, 'relevance_score') || findValueByKey(actual, 'relevance') || findValueByKey(actual, 'value')),
               }
           }
-      }
-      
-      // --- Data Structure Normalization ---
-      
-      // Fix Sections: Convert string arrays or key-value objects to ContentSection[]
-      if (generatedContent.sections) {
-          if (Array.isArray(generatedContent.sections)) {
-               // Handle ["Heading"] -> [{ heading: "Heading" }]
-               if (generatedContent.sections.length > 0 && typeof generatedContent.sections[0] === 'string') {
-                   generatedContent.sections = (generatedContent.sections as any[]).map(s => ({ heading: s, key_points: [] }));
-               }
-          } else if (typeof generatedContent.sections === 'object') {
-              // Handle { "Intro": ["point"] } -> [{ heading: "Intro", key_points: ["point"] }]
-              generatedContent.sections = Object.entries(generatedContent.sections).map(([k, v]) => ({
-                  heading: k,
-                  key_points: Array.isArray(v) ? v : [String(v)]
-              }));
-          } else if (typeof generatedContent.sections === 'string') {
-              // Handle Text Block "1. Heading\n2. Heading"
-              const str = generatedContent.sections as string;
-              const lines = str.split('\n').filter(l => l.trim().length > 0);
-              generatedContent.sections = lines.map(line => ({ 
-                  heading: line.replace(/^\d+[\.:]\s*/, '').replace(/\*\*/g, '').trim(), 
-                  key_points: [] 
-              }));
-          }
-      }
-
-      // Fix FAQ: Convert strings to objects
-      if (Array.isArray(generatedContent.faq)) {
-           generatedContent.faq = generatedContent.faq.map((f: any) => {
-               if (typeof f === 'string') return { q: f, a_outline: [] };
-               if (f.question && !f.q) f.q = f.question;
-               if (f.answer && !f.a_outline) f.a_outline = [f.answer];
-               return f;
-           });
-      }
-      
-      if (!generatedContent.seo_title) generatedContent.seo_title = t.title || '';
-  }
-
-  // 2. Scavenge Validator Data
-  // Important: Create a mutable copy to avoid modifying read-only state objects
-  let validatorData: ValidatorData | undefined = t.validatorData ? { ...t.validatorData } : undefined;
-  
-  if (!validatorData) {
-      // Search for consolidated objects first
-      const result = findValueByKey(t, 'validator_response') || findValueByKey(t, 'validator_result') || findValueByKey(t, 'validation_data');
-      if (result) {
-          const parsed = robustParse(result);
-          const actualResult = parsed.result || parsed;
-          validatorData = {
-              validated_at: t.validated_at || new Date().toISOString(),
-              result: (typeof actualResult === 'object' && actualResult !== null) ? actualResult : {}
-          };
-      }
-  }
-
-  // Check if we found validatorData but it's missing scores, OR if we never found it
-  // In either case, run the manual score scavenger to find stray score keys
-  let scoresFound = validatorData?.result?.scores;
-  
-  // Try finding scores object using multiple possible key names
-  if (!scoresFound) {
-      scoresFound = findValueByKey(t, 'scores') || findValueByKey(t, 'Scores');
-      if (scoresFound) scoresFound = robustParse(scoresFound);
-  }
-
-  // If still no scores object, look for individual score keys at root or anywhere
-  // We use a mapping to handle spaced keys like "B2B Tone" which might not be caught by simple snake_case conversion
-  if (!scoresFound) {
-       const individualScores: any = {};
-       const scoreKeys = [
-           { key: 'b2b_tone', alts: ['B2B Tone', 'b2b tone', 'Tone'] },
-           { key: 'brand_alignment', alts: ['Brand Alignment', 'brand alignment', 'Alignment'] },
-           { key: 'structure', alts: ['Structure', 'structure'] },
-           { key: 'accuracy', alts: ['Accuracy', 'accuracy'] },
-           { key: 'enterprise_relevance', alts: ['Enterprise Relevance', 'enterprise relevance', 'Relevance'] }
-       ];
-
-       let foundAny = false;
-       scoreKeys.forEach(item => {
-           // Search for main key
-           let val = findValueByKey(t, item.key);
-           
-           // Search alts if not found
-           if (val === undefined) {
-               for (const alt of item.alts) {
-                   val = findValueByKey(t, alt);
-                   if (val !== undefined) break;
-               }
-           }
-
-           // Handle "8/10" string format
-           if (typeof val === 'string' && val.includes('/')) {
-               val = val.split('/')[0];
-           }
-
-           if (val !== undefined && !isNaN(Number(val))) {
-               individualScores[item.key] = Number(val);
-               foundAny = true;
-           }
-       });
-       if (foundAny) scoresFound = individualScores;
-  }
-
-  // Construct or Merge validatorData
-  if (scoresFound) {
-      if (!validatorData) {
-           validatorData = {
-               validated_at: t.validated_at || new Date().toISOString(),
-               result: {
-                   scores: scoresFound,
-                   summary: '',
-                   reasons: [],
-                   recommendations: [],
-                   status: 'completed'
-               }
-           };
-      } else if (validatorData.result && typeof validatorData.result === 'object') {
-          // Merge scores into existing result (copying result first)
-          validatorData.result = { ...validatorData.result, scores: { ...validatorData.result.scores, ...scoresFound } };
-      }
-  }
-
-  // Ensure result object exists if validatorData exists (Safety check for incomplete DB records)
-  if (validatorData && (!validatorData.result || typeof validatorData.result !== 'object')) {
-      validatorData.result = {
-          status: 'unknown',
-          summary: '',
-          reasons: [],
-          recommendations: [],
-          scores: { b2b_tone: 0, brand_alignment: 0, structure: 0, accuracy: 0, enterprise_relevance: 0 }
       };
   }
 
-  // FIX: Force population of summary/reasons/recommendations if missing
-  if (validatorData && validatorData.result) {
-      // result is definitely an object here, but we check specifically for missing string properties
-      const res = validatorData.result; // Alias for cleaner access
-      
-      if (!res.summary || res.summary === '') {
-          const scavengedSummary = findValueByKey(t, 'summary') || 
-                                   findValueByKey(t, 'executive_summary') || 
-                                   findValueByKey(t, 'validation_summary') || 
-                                   findValueByKey(t, 'validator_summary');
-          if (scavengedSummary && typeof scavengedSummary === 'string') {
-              res.summary = scavengedSummary;
-          }
-      }
-      
-      if (!res.reasons || res.reasons.length === 0) {
-           const scavengedReasons = findValueByKey(t, 'reasons');
-           if (scavengedReasons) res.reasons = robustParse(scavengedReasons);
-      }
-
-      if (!res.recommendations || res.recommendations.length === 0) {
-           const scavengedRecs = findValueByKey(t, 'recommendations');
-           if (scavengedRecs) res.recommendations = robustParse(scavengedRecs);
-      }
-      
-      // Social Media Fix Suggestions mapping
-      if (!res.fix_suggestions || res.fix_suggestions.length === 0) {
-           const scavengedFixes = findValueByKey(t, 'fix_suggestions') || findValueByKey(t, 'fixSuggestions');
-           if (scavengedFixes) res.fix_suggestions = robustParse(scavengedFixes);
-      }
-  }
-
-  // 3. Status Logic
+  // Determine status - ensure CONTENT_GENERATED if we have data
   let status = t.status || TopicStatus.PENDING;
-  // If we have content (HTML or Social Post), promote status
-  const hasSocialContent = generatedContent?.socialPost && generatedContent.socialPost.length > 20;
-  const hasArticleContent = generatedContent?.content_html && generatedContent.content_html.length > 50;
-  
-  if ((hasArticleContent || hasSocialContent) && status === TopicStatus.PENDING) {
+  const hasContent = (generatedContent.content_html?.length || 0) > 10 || (generatedContent.socialPost?.length || 0) > 10;
+  if (hasContent && (status === TopicStatus.PENDING || status === TopicStatus.HUMAN_APPROVED)) {
       status = TopicStatus.CONTENT_GENERATED;
   }
-
-  // 4. Bi-Directional Image Sync
-  let finalImgUrl = t.img_url || generatedContent?.featured_image || '';
-  
-  if (!finalImgUrl) {
-      const deepImg = findValueByKey(t, 'featured_image') || findValueByKey(t, 'img_url');
-      if (deepImg && typeof deepImg === 'string') finalImgUrl = cleanString(deepImg);
-  }
-
-  if (generatedContent && !generatedContent.featured_image && finalImgUrl) {
-      generatedContent.featured_image = finalImgUrl;
-  }
-  
-  t.img_url = finalImgUrl;
-
-  // 5. Content Type Scavenging
-  let contentType: ContentType = t.contentType || t.content_type || t.type || 'Article';
-  // Ensure valid values
-  const validTypes: ContentType[] = ['Article', 'Socials Media', 'Backlinks Content'];
-  if (!validTypes.includes(contentType)) {
-      if (contentType.toLowerCase().includes('social')) contentType = 'Socials Media';
-      else if (contentType.toLowerCase().includes('backlink')) contentType = 'Backlinks Content';
-      else contentType = 'Article';
-  }
-  
-  // If Social Media Content and content_html is empty, construct it from post data for fallback
-  if (contentType === 'Socials Media' && generatedContent && !generatedContent.content_html && generatedContent.socialPost) {
-       generatedContent.content_html = `
-         <div class="social-post">
-            ${generatedContent.hook ? `<h3>${generatedContent.hook}</h3>` : ''}
-            <p>${generatedContent.socialPost.replace(/\n/g, '<br/>')}</p>
-            ${generatedContent.hashtags ? `<p class="text-sm text-blue-600">${generatedContent.hashtags}</p>` : ''}
-         </div>
-       `;
-  }
-
-  // 6. Scavenge Extra Fields for Social/Backlinks
-  const platformType = findValueByKey(t, 'platformType') || findValueByKey(t, 'platform_type');
-  const mainTopic = findValueByKey(t, 'mainTopic') || findValueByKey(t, 'main_topic');
-  const targetAudience = findValueByKey(t, 'targetAudience') || findValueByKey(t, 'target_audience');
-  const contentGoal = findValueByKey(t, 'contentGoal') || findValueByKey(t, 'content_goal');
-  const toneVoice = findValueByKey(t, 'toneVoice') || findValueByKey(t, 'tone_voice') || findValueByKey(t, 'tone');
-  const callToAction = findValueByKey(t, 'callToAction') || findValueByKey(t, 'call_to_action') || findValueByKey(t, 'cta');
-  const anchorText = findValueByKey(t, 'anchorText') || findValueByKey(t, 'anchor_text');
-  const destinationUrl = findValueByKey(t, 'destinationUrl') || findValueByKey(t, 'destination_url') || findValueByKey(t, 'dest_url');
-  const wordCount = findValueByKey(t, 'wordCount') || findValueByKey(t, 'word_count');
-  const linkPlacement = findValueByKey(t, 'linkPlacement') || findValueByKey(t, 'link_placement');
-  const extraLinks = findValueByKey(t, 'extraLinks') || findValueByKey(t, 'extra_links');
-  const backlinkPlatform = findValueByKey(t, 'backlinkPlatform') || findValueByKey(t, 'backlink_platform') || findValueByKey(t, 'content_platform');
 
   return {
     ...t,
     id,
-    keyword: t.keyword || 'Unknown Keyword',
+    keyword: t.keyword || generatedContent.focus_keyword || 'Unknown',
     product: t.product || 'Unknown Product',
-    pageId: t.pageId || t.page_id || '', 
-    contentType: contentType, 
-    title: t.title || 'Untitled Topic',
-    angle: t.angle || '',
-    searchIntent: t.searchIntent || t.search_intent || '',
-    whyRelevant: t.whyRelevant || t.why_relevant || '',
-    aiReason: t.aiReason || t.ai_reason || '',
-    status: status,
+    contentType: t.contentType || 'Article',
+    title: t.title || generatedContent.title || 'Untitled Topic',
+    status,
     createdAt: t.createdAt || new Date().toISOString(),
-    img_url: finalImgUrl,
     generatedContent,
     validatorData,
-    htmlContent: t.htmlContent || generatedContent?.content_html,
-    
-    // New Fields Persistence
-    platformType,
-    mainTopic,
-    targetAudience,
-    contentGoal,
-    toneVoice,
-    callToAction,
-    anchorText,
-    destinationUrl,
-    wordCount,
-    linkPlacement,
-    extraLinks,
-    backlinkPlatform
+    anchorText: getString(t, 'anchorText', 'anchor_text'),
+    destinationUrl: getString(t, 'destinationUrl', 'destination_url'),
+    backlinkPlatform: getString(t, 'backlinkPlatform', 'backlink_platform'),
+    platformType: getString(t, 'platformType', 'platform', 'social_platform', 'network'),
+    toneVoice: getString(t, 'toneVoice', 'tone_voice'),
+    targetAudience: getString(t, 'targetAudience', 'target_audience'),
+    contentGoal: getString(t, 'contentGoal', 'content_goal'),
+    img_url: foundImage // Ensure top-level property is synced
   };
 };
 
 export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
-  const [theme, setTheme] = useState<Theme>(() => {
-    return (localStorage.getItem('topicGen_theme') as Theme) || 'light';
-  });
-
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('topicGen_theme') as Theme) || 'light');
   const [topics, setTopics] = useState<Topic[]>([]);
   const [preferredAngles, setPreferredAngles] = useState<string[]>([]);
   const [unpreferredAngles, setUnpreferredAngles] = useState<string[]>([]);
 
-  // Webhooks
   const [webhookUrl, setWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_webhook') || 'https://hook.us2.make.com/p0fwplqxbb8dazf65l1mqoa0for1aoxj');
   const [contentWebhookUrl, setContentWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_content_webhook') || 'https://hook.us2.make.com/x7617cbg9m44yeske2a1gpom9u1ntdsf');
   const [feedbackWebhookUrl, setFeedbackWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_feedback_webhook') || 'https://hook.us2.make.com/vez8sh43oam4ew6e9qt0j2mjr82jynxt');
   const [syncWebhookUrl, setSyncWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_sync_webhook') || '');
   const [articleReviewWebhookUrl, setArticleReviewWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_article_review_webhook') || 'https://hook.us2.make.com/l4seaxq3m0pppc2fdu6zzfppj5guc6re');
   const [draftingWebhookUrl, setDraftingWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_drafting_webhook') || 'https://hook.us2.make.com/hpg4g5b1tv6oq7teawrbwm923qm5bgin');
+  const [socialReviewWebhookUrl, setSocialReviewWebhookUrl] = useState<string>(() => localStorage.getItem('topicGen_social_review_webhook') || 'https://hook.us2.make.com/xl8jv2pce1bluu9cv3uieydyjuw2v72p');
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [contentGeneratingIds, setContentGeneratingIds] = useState<string[]>([]);
 
-  // Initialize Data
   useEffect(() => {
     const initData = async () => {
       await syncTopics();
@@ -577,9 +314,6 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
       if (config) {
         if (config.preferredAngles.length > 0) setPreferredAngles(config.preferredAngles);
         if (config.unpreferredAngles.length > 0) setUnpreferredAngles(config.unpreferredAngles);
-      } else {
-        setPreferredAngles(['Enterprise scalability', 'Data security and compliance', 'Cost reduction strategies']);
-        setUnpreferredAngles(['Cheap/Free alternatives', 'Beginner tutorials', 'Opinion pieces']);
       }
     };
     initData();
@@ -591,18 +325,7 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     localStorage.setItem('topicGen_theme', theme);
   }, [theme]);
 
-  // Persist Settings
-  useEffect(() => { localStorage.setItem('topicGen_webhook', webhookUrl); }, [webhookUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_content_webhook', contentWebhookUrl); }, [contentWebhookUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_feedback_webhook', feedbackWebhookUrl); }, [feedbackWebhookUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_sync_webhook', syncWebhookUrl); }, [syncWebhookUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_article_review_webhook', articleReviewWebhookUrl); }, [articleReviewWebhookUrl]);
-  useEffect(() => { localStorage.setItem('topicGen_drafting_webhook', draftingWebhookUrl); }, [draftingWebhookUrl]);
-
-  const saveTopicToCloud = async (topic: Topic) => {
-    try { await saveSupabaseTopic(topic); } 
-    catch (e: any) { console.error("Supabase Save failed:", e.message); }
-  };
+  const saveTopicToCloud = async (topic: Topic) => { try { await saveSupabaseTopic(topic); } catch (e: any) { console.error(e); } };
 
   const addTopics = (newTopics: Topic[]) => {
     setTopics((prev) => [...newTopics, ...prev]);
@@ -610,151 +333,62 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   };
 
   const updateTopicStatus = (id: string, status: TopicStatus) => {
-    setTopics((prev) =>
-      prev.map((t) => {
-          if (t.id === id) {
-              const updated = { ...t, status };
-              saveTopicToCloud(updated);
-              return updated;
-          }
-          return t;
-      })
-    );
+    setTopics((prev) => prev.map((t) => {
+        if (t.id === id) { const updated = { ...t, status }; saveTopicToCloud(updated); return updated; }
+        return t;
+    }));
   };
 
   const saveGeneratedContent = (id: string, data: any) => {
     setTopics((prev) => {
       const existingTopic = prev.find(t => t.id === id);
       if (!existingTopic) return prev;
-
-      const safeData = robustParse(data);
-      const mergedRaw = { ...existingTopic, ...safeData };
+      const mergedRaw = { ...existingTopic, ...(typeof data === 'string' ? robustParse(data) : data) };
       const updatedTopic = normalizeTopic(mergedRaw);
       updatedTopic.status = TopicStatus.CONTENT_GENERATED;
-      
-      console.log("Saving generated content:", updatedTopic);
       saveTopicToCloud(updatedTopic);
-      
       return prev.map(t => t.id === id ? updatedTopic : t);
     });
   };
 
-  const deleteTopic = (id: string) => {
-    deleteSupabaseTopic(id).catch(e => console.error(e));
-    setTopics((prev) => prev.filter((t) => String(t.id) !== String(id)));
-  };
-
-  const addAngle = (type: 'preferred' | 'unpreferred', angle: string) => {
-    if (type === 'preferred') {
-      if (!preferredAngles.includes(angle)) {
-        const newAngles = [...preferredAngles, angle];
-        setPreferredAngles(newAngles);
-        saveAppConfig('preferred_angles', newAngles);
-      }
-    } else {
-      if (!unpreferredAngles.includes(angle)) {
-        const newAngles = [...unpreferredAngles, angle];
-        setUnpreferredAngles(newAngles);
-        saveAppConfig('unpreferred_angles', newAngles);
-      }
-    }
-  };
-
-  const removeAngle = (type: 'preferred' | 'unpreferred', angle: string) => {
-    if (type === 'preferred') {
-      const newAngles = preferredAngles.filter((a) => a !== angle);
-      setPreferredAngles(newAngles);
-      saveAppConfig('preferred_angles', newAngles);
-    } else {
-      const newAngles = unpreferredAngles.filter((a) => a !== angle);
-      setUnpreferredAngles(newAngles);
-      saveAppConfig('unpreferred_angles', newAngles);
-    }
-  };
-
-  const addContentGeneratingId = (id: string) => setContentGeneratingIds(prev => [...prev, id]);
-  const removeContentGeneratingId = (id: string) => setContentGeneratingIds(prev => prev.filter(item => item !== id));
+  const deleteTopic = (id: string) => { deleteSupabaseTopic(id); setTopics((prev) => prev.filter((t) => String(t.id) !== String(id))); };
 
   const syncTopics = async () => {
-    let externalTopics: Topic[] = [];
-    try {
-        externalTopics = await fetchSupabaseTopics();
-    } catch (e: any) {
-        console.error("Supabase Sync Failed:", e);
-        if (syncWebhookUrl) {
-           try { externalTopics = await fetchExternalData(syncWebhookUrl); } catch(err) {}
-        }
-    }
-    
-    setTopics(currentTopics => {
-       const currentMap = new Map<string, Topic>(currentTopics.map(t => [String(t.id), t]));
-       externalTopics.forEach(ext => {
-           const id = ext.id ? String(ext.id) : generateId();
-           const mergedRaw = { ...ext, id };
-           const normalized = normalizeTopic(mergedRaw);
-           currentMap.set(id, normalized);
-       });
-       return Array.from(currentMap.values());
+    let ext: Topic[] = [];
+    try { ext = await fetchSupabaseTopics(); } catch (e) { if (syncWebhookUrl) try { ext = await fetchExternalData(syncWebhookUrl); } catch(err) {} }
+    setTopics(curr => {
+       const map = new Map<string, Topic>(curr.map(t => [String(t.id), t]));
+       ext.forEach(e => { const id = e.id ? String(e.id) : generateId(); map.set(id, normalizeTopic({ ...e, id })); });
+       return Array.from(map.values());
     });
-  };
-
-  const exportData = () => {
-      const dataStr = JSON.stringify(topics, null, 2);
-      const blob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `topic_gen_backup.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-  };
-
-  const importData = (jsonData: string) => {
-    try {
-      const parsed = JSON.parse(jsonData);
-      if (!Array.isArray(parsed)) { alert("Invalid data"); return; }
-      const importedTopics: Topic[] = parsed.map(normalizeTopic);
-      setTopics(prev => {
-         const topicMap = new Map(prev.map(t => [String(t.id), t]));
-         importedTopics.forEach(t => topicMap.set(String(t.id), t));
-         return Array.from(topicMap.values());
-      });
-      importedTopics.forEach(t => saveTopicToCloud(t));
-      alert(`Imported ${importedTopics.length} topics.`);
-    } catch (e) { alert("Failed to parse JSON."); }
   };
 
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
   return (
-    <AppContext.Provider
-      value={{
-        topics,
-        addTopics,
-        updateTopicStatus,
-        saveGeneratedContent,
-        deleteTopic,
-        preferredAngles,
-        unpreferredAngles,
-        webhookUrl, setWebhookUrl,
-        contentWebhookUrl, setContentWebhookUrl,
-        feedbackWebhookUrl, setFeedbackWebhookUrl,
-        syncWebhookUrl, setSyncWebhookUrl,
-        articleReviewWebhookUrl, setArticleReviewWebhookUrl,
-        draftingWebhookUrl, setDraftingWebhookUrl,
-        addAngle,
-        removeAngle,
-        generateId,
-        isGenerating, setIsGenerating,
-        contentGeneratingIds, addContentGeneratingId, removeContentGeneratingId,
-        syncTopics,
-        exportData,
-        importData,
-        availableProducts: PRODUCTS,
-        theme, toggleTheme
-      }}
-    >
+    <AppContext.Provider value={{
+        topics, addTopics, updateTopicStatus, saveGeneratedContent, deleteTopic,
+        preferredAngles, unpreferredAngles, webhookUrl, setWebhookUrl,
+        contentWebhookUrl, setContentWebhookUrl, feedbackWebhookUrl, setFeedbackWebhookUrl,
+        syncWebhookUrl, setSyncWebhookUrl, articleReviewWebhookUrl, setArticleReviewWebhookUrl,
+        draftingWebhookUrl, setDraftingWebhookUrl, socialReviewWebhookUrl, setSocialReviewWebhookUrl,
+        addAngle: (type, angle) => {
+          const arr = type === 'preferred' ? preferredAngles : unpreferredAngles;
+          if (!arr.includes(angle)) {
+              const next = [...arr, angle];
+              if (type === 'preferred') setPreferredAngles(next); else setUnpreferredAngles(next);
+              saveAppConfig(type === 'preferred' ? 'preferred_angles' : 'unpreferred_angles', next);
+          }
+        },
+        removeAngle: (type, angle) => {
+          const next = (type === 'preferred' ? preferredAngles : unpreferredAngles).filter(a => a !== angle);
+          if (type === 'preferred') setPreferredAngles(next); else setUnpreferredAngles(next);
+          saveAppConfig(type === 'preferred' ? 'preferred_angles' : 'unpreferred_angles', next);
+        },
+        generateId, isGenerating, setIsGenerating, contentGeneratingIds, addContentGeneratingId: (id) => setContentGeneratingIds(p => [...p, id]),
+        removeContentGeneratingId: (id) => setContentGeneratingIds(p => p.filter(i => i !== id)),
+        syncTopics, exportData: () => {}, importData: () => {}, availableProducts: PRODUCTS, theme, toggleTheme
+      }}>
       {children}
     </AppContext.Provider>
   );

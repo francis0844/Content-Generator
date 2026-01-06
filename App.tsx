@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { AppProvider } from './context/AppContext';
 import Layout from './components/Layout';
@@ -16,6 +15,10 @@ const AppContent: React.FC = () => {
     switch (currentView) {
       case 'dashboard':
         return <Dashboard onViewChange={(view) => setCurrentView(view as ViewState)} />;
+      case 'article_results':
+        return <Results forcedType="Article" />;
+      case 'backlink_results':
+        return <Results forcedType="Backlinks Content" />;
       case 'results':
         return <Results />;
       case 'generated_content':

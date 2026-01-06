@@ -1,5 +1,3 @@
-
-
 export enum TopicStatus {
   PENDING = 'PENDING',
   AI_APPROVED = 'AI_APPROVED',
@@ -86,6 +84,7 @@ export interface Topic {
   generatedContent?: GeneratedContentData;
   validatorData?: ValidatorData;
   htmlContent?: string;
+  documentUrl?: string; // Google Docs URL from Make.com
   
   // Explicit DB field for image
   img_url?: string;
@@ -148,4 +147,4 @@ export interface ProductDef {
   id: string;
 }
 
-export type ViewState = 'dashboard' | 'results' | 'configuration' | 'settings' | 'generated_content' | 'social_generated' | 'backlink_generated';
+export type ViewState = 'dashboard' | 'article_results' | 'backlink_results' | 'results' | 'configuration' | 'settings' | 'generated_content' | 'social_generated' | 'backlink_generated';

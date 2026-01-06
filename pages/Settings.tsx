@@ -1,3 +1,5 @@
+
+
 import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Save, Database, Webhook, FileText, MessageSquare, Download, Upload, CheckSquare, Server, Share2, Send, Info, Layers, ArrowRight, CheckCircle } from 'lucide-react';
@@ -10,6 +12,7 @@ const Settings: React.FC = () => {
       syncWebhookUrl, setSyncWebhookUrl,
       articleReviewWebhookUrl, setArticleReviewWebhookUrl,
       draftingWebhookUrl, setDraftingWebhookUrl,
+      socialReviewWebhookUrl, setSocialReviewWebhookUrl,
       exportData, importData
   } = useApp();
 
@@ -215,6 +218,38 @@ const Settings: React.FC = () => {
                         >
                             {saved === 'article_review' ? <CheckSquare className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                             {saved === 'article_review' ? 'Saved' : 'Save'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+         {/* Social Media Review Webhook */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
+                <Share2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <h3 className="font-semibold text-gray-800 dark:text-white">Social Media Webhook</h3>
+            </div>
+            <div className="p-6 space-y-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                    This webhook is called when you <strong>Approve</strong> or <strong>Reject</strong> a Social Media post.
+                </p>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Social Media Webhook URL</label>
+                    <div className="flex gap-2">
+                        <input
+                            type="url"
+                            value={socialReviewWebhookUrl}
+                            onChange={(e) => setSocialReviewWebhookUrl(e.target.value)}
+                            placeholder="https://hook.us2.make.com/..."
+                            className="bg-white dark:bg-gray-750 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
+                        />
+                        <button 
+                            onClick={() => handleSave('social_review')}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${saved === 'social_review' ? 'bg-green-600 text-white' : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white'}`}
+                        >
+                            {saved === 'social_review' ? <CheckSquare className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                            {saved === 'social_review' ? 'Saved' : 'Save'}
                         </button>
                     </div>
                 </div>

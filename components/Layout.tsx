@@ -1,6 +1,5 @@
-
 import React, { useState } from 'react';
-import { LayoutDashboard, List, Settings, ThumbsUp, FileText, Moon, Sun, Menu, X, Database, ChevronDown, Share2, Link as LinkIcon } from 'lucide-react';
+import { LayoutDashboard, List, Settings, ThumbsUp, FileText, Moon, Sun, Menu, X, Database, ChevronDown, Share2, Link as LinkIcon, Clock } from 'lucide-react';
 import { ViewState } from '../types';
 import { useApp } from '../context/AppContext';
 
@@ -44,7 +43,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
         icon: FileText,
         type: 'dropdown',
         children: [
-            { id: 'results', label: 'Topic Results', icon: List },
+            { id: 'article_results', label: 'Ideation Queue', icon: Clock },
             { id: 'generated_content', label: 'Generated Articles', icon: FileText },
             { id: 'configuration', label: 'Angles & Config', icon: ThumbsUp },
         ]
@@ -103,7 +102,6 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
             <nav className="hidden md:flex items-center space-x-2 ml-6">
                 {navStructure.map((item: any) => {
                   const Icon = item.icon;
-                  // Check if any child is active to highlight parent
                   const isParentActive = item.children?.some((child: any) => child.id === currentView);
                   const isActive = currentView === item.id || isParentActive;
 
@@ -123,7 +121,6 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
                         </button>
                       );
                   } else {
-                      // Dropdown
                       return (
                           <div 
                             key={item.id} 
@@ -143,7 +140,6 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
                                 <ChevronDown className={`w-3 h-3 ml-1 transition-transform ${activeDropdown === item.id ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {/* Dropdown Menu */}
                             <div className={`absolute left-0 mt-0 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden transition-all duration-200 origin-top-left z-50 ${activeDropdown === item.id ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-2 pointer-events-none'}`}>
                                 <div className="py-1">
                                     {item.children.map((child: any) => {
@@ -175,7 +171,6 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
                 })}
             </nav>
 
-            {/* Right Actions */}
             <div className="flex items-center gap-3 ml-4">
                  <button
                     onClick={handleSync}
@@ -201,7 +196,6 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
                     {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
                   </button>
 
-                  {/* Mobile Menu Button */}
                   <div className="md:hidden flex items-center ml-1">
                     <button
                         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -214,7 +208,6 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
           </div>
         </div>
         
-        {/* Mobile Navigation Dropdown */}
         {isMobileMenuOpen && (
             <div className="md:hidden border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 animate-fadeIn absolute w-full shadow-lg z-50 max-h-[80vh] overflow-y-auto">
                 <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
@@ -240,7 +233,6 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
                                 </button>
                             );
                         } else {
-                            // Mobile Group
                             return (
                                 <div key={item.id} className="border-b border-gray-100 dark:border-gray-700 last:border-0 pb-2 mb-2">
                                     <div className="px-4 py-2 text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider flex items-center">
@@ -276,21 +268,18 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setCurrentView, children }
         )}
       </header>
 
-      {/* Loading Overlay */}
       {isGenerating && (
             <div className="absolute top-[80px] left-0 w-full h-1 bg-indigo-100 dark:bg-indigo-900 overflow-hidden z-40">
                 <div className="h-full bg-indigo-500 dark:bg-indigo-400 animate-pulse w-full origin-left-right"></div>
             </div>
       )}
 
-      {/* Main Content Area */}
       <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-900 scroll-smooth">
-          <div className="max-w-7xl mx-auto p-4 md:p-8 h-full">
+          <div className="max-w-7xl mx-auto p-4 md:p-8 min-h-full">
             {children}
           </div>
       </main>
 
-      {/* Simple Footer */}
       <footer className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 py-4 px-8 flex-shrink-0">
          <p className="text-center text-xs text-gray-400 dark:text-gray-500">
              &copy; 2024 Anchor Computer Software. All rights reserved.
