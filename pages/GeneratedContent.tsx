@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { TopicStatus, Topic, ContentType } from '../types';
-import { Search, ChevronLeft, Trash2, FileText, Share2, Link as LinkIcon, Image as ImageIcon, ExternalLink, CheckSquare, Square } from 'lucide-react';
+import { Search, ChevronLeft, Trash2, FileText, Share2, Link as LinkIcon, Image as ImageIcon, ExternalLink, CheckSquare, Square, Calendar, MessageCircle } from 'lucide-react';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { sendArticleReview, sendSocialMediaReview } from '../services/makeService';
 import { ArticleViewer } from '../components/viewers/ArticleViewer';
@@ -36,6 +36,10 @@ const GeneratedContent: React.FC<GeneratedContentProps> = ({ forcedType }) => {
   });
   
   const [reviewStatus, setReviewStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+
+  // Social Media Approval State
+  const [socialScheduleDate, setSocialScheduleDate] = useState('');
+  const [socialFirstComment, setSocialFirstComment] = useState('');
 
   const filteredTopics = useMemo(() => {
     return topics.filter(t => {
@@ -97,7 +101,10 @@ const GeneratedContent: React.FC<GeneratedContentProps> = ({ forcedType }) => {
         action, 
         reason: '', 
         targetTopicId: topicId || viewingTopic?.id 
-    }); 
+    });
+    // Reset social fields
+    setSocialScheduleDate('');
+    setSocialFirstComment('');
   };
 
   const initiateBulkDelete = () => {
@@ -139,7 +146,16 @@ const GeneratedContent: React.FC<GeneratedContentProps> = ({ forcedType }) => {
       setReviewStatus('sending');
       try {
           if (viewingTopic.contentType === 'Socials Media') {
-              await sendSocialMediaReview(socialReviewWebhookUrl, { ...viewingTopic, review_action: action, reason: reason });
+              // Append seconds and GMT-06:00 offset explicitly as requested
+              const formattedDate = socialScheduleDate ? `${socialScheduleDate}:00-06:00` : '';
+              
+              await sendSocialMediaReview(socialReviewWebhookUrl, { 
+                  ...viewingTopic, 
+                  review_action: action, 
+                  reason: reason,
+                  schedule_date: formattedDate,
+                  first_comment: socialFirstComment
+              });
               updateTopicStatus(viewingTopic.id, action === 'APPROVED' ? TopicStatus.HUMAN_APPROVED : TopicStatus.HUMAN_REJECTED);
           } else {
               await sendArticleReview(articleReviewWebhookUrl, { 
@@ -172,6 +188,9 @@ const GeneratedContent: React.FC<GeneratedContentProps> = ({ forcedType }) => {
   };
 
   const PageIcon = forcedType === 'Socials Media' ? Share2 : (forcedType === 'Backlinks Content' ? LinkIcon : FileText);
+
+  // Check if we are approving a social media post to show extra fields
+  const isSocialApproval = viewingTopic?.contentType === 'Socials Media' && reviewModalState.action === 'APPROVED';
 
   return (
     <div className="space-y-6 h-full flex flex-col">
@@ -394,14 +413,46 @@ const GeneratedContent: React.FC<GeneratedContentProps> = ({ forcedType }) => {
           isOpen={reviewModalState.isOpen} 
           onClose={() => setReviewModalState(p => ({ ...p, isOpen: false }))} 
           onConfirm={confirmReview} 
-          title={reviewModalState.action === 'DELETE' ? 'Delete Entry' : 'Content Review'} 
-          message={reviewModalState.action === 'DELETE' ? (selectedIds.size > 0 && !reviewModalState.targetTopicId ? `Are you sure you want to delete ${selectedIds.size} items?` : 'Are you sure you want to permanently remove this content from the library? This action cannot be undone.') : `Are you sure you want to ${reviewModalState.action?.toLowerCase()} this content?`} 
+          title={reviewModalState.action === 'DELETE' ? 'Delete Entry' : (isSocialApproval ? 'Approve & Schedule Post' : 'Content Review')} 
+          message={reviewModalState.action === 'DELETE' ? (selectedIds.size > 0 && !reviewModalState.targetTopicId ? `Are you sure you want to delete ${selectedIds.size} items?` : 'Are you sure you want to permanently remove this content from the library? This action cannot be undone.') : (isSocialApproval ? 'Please configure the publishing details for this social media post.' : `Are you sure you want to ${reviewModalState.action?.toLowerCase()} this content?`)} 
           variant={reviewModalState.action === 'REJECTED' || reviewModalState.action === 'DELETE' ? 'danger' : 'success'}
-          showInput={reviewModalState.action === 'DRAFT' || reviewModalState.action === 'REJECTED' || ((viewingTopic?.contentType === 'Socials Media' || forcedType === 'Socials Media') && reviewModalState.action === 'APPROVED')}
+          showInput={reviewModalState.action === 'DRAFT' || reviewModalState.action === 'REJECTED' || isSocialApproval}
           inputValue={reviewModalState.reason}
           onInputChange={(val) => setReviewModalState(p => ({ ...p, reason: val }))}
-          inputPlaceholder="Please provide feedback or internal notes for the system..."
-       />
+          inputPlaceholder={isSocialApproval ? "Approval Notes / Internal Reason (Optional)" : "Please provide feedback or internal notes for the system..."}
+       >
+           {isSocialApproval && (
+               <div className="space-y-5 mt-4 bg-gray-50 dark:bg-gray-900/50 p-4 rounded-xl border border-gray-100 dark:border-gray-700">
+                    <div className="space-y-2">
+                        <label className="flex items-center justify-between w-full">
+                            <div className="flex items-center gap-2 text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                                <Calendar className="w-3 h-3" />
+                                Schedule Date & Time
+                            </div>
+                            <span className="text-[10px] text-gray-500 font-medium">GMT-06:00 America/Chicago (CST)</span>
+                        </label>
+                        <input 
+                            type="datetime-local" 
+                            value={socialScheduleDate}
+                            onChange={(e) => setSocialScheduleDate(e.target.value)}
+                            className="w-full px-4 py-3 border border-gray-200 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm transition-all [color-scheme:light] dark:[color-scheme:dark]"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                         <label className="flex items-center gap-2 text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                            <MessageCircle className="w-3 h-3" />
+                            First Comment (Optional)
+                         </label>
+                         <textarea
+                            value={socialFirstComment}
+                            onChange={(e) => setSocialFirstComment(e.target.value)}
+                            placeholder="Add hashtags, links, or engagement starters..."
+                            className="w-full px-4 py-3 border border-gray-200 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 resize-none h-24 shadow-sm transition-all placeholder-gray-400"
+                         />
+                    </div>
+               </div>
+           )}
+       </ConfirmationModal>
     </div>
   );
 };
